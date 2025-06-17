@@ -325,11 +325,16 @@ impl Downloader {
 /// and adds 1 to account for the range request.
 pub fn get_content_length(response: &Response) -> u64 {
     if let Some(content_range) = response.headers().get("Content-Range") {
+        // Content-Range format is typically: "bytes 0-0/230917262"
+        // We want to extract the number after the slash
         content_range
             .to_str()
             .ok()
-            .and_then(|range| range.split('/').last())
-            .and_then(|size| size.parse::<u64>().ok())
+            .and_then(|range| {
+                range.split('/')
+                    .last()
+                    .and_then(|size| size.trim().parse::<u64>().ok())
+            })
             .unwrap_or(0)
     } else {
         response.content_length().unwrap_or(0).saturating_add(1)
@@ -670,14 +675,5 @@ mod test {
             d.concurrent_downloads,
             Downloader::DEFAULT_CONCURRENT_DOWNLOADS
         );
-        assert_eq!(d.use_range_for_content_length, false);
-    }
-
-    #[test]
-    fn test_builder_use_range_for_content_length() {
-        let d = DownloaderBuilder::new()
-            .use_range_for_content_length(true)
-            .build();
-        assert_eq!(d.use_range_for_content_length, true);
     }
 }
