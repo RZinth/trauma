@@ -5,7 +5,7 @@ use futures::stream::{self, StreamExt};
 use indicatif::{MultiProgress, ProgressBar, ProgressDrawTarget, ProgressStyle};
 use reqwest::{
     header::{HeaderMap, HeaderValue, IntoHeaderName, RANGE},
-    StatusCode,
+    Response, StatusCode,
 };
 use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
 use reqwest_retry::{policies::ExponentialBackoff, RetryTransientMiddleware};
@@ -41,6 +41,8 @@ pub struct Downloader {
     resumable: bool,
     /// Custom HTTP headers.
     headers: Option<HeaderMap>,
+    /// Use range requests to get content length instead of HEAD requests.
+    use_range_for_content_length: bool,
 }
 
 impl Downloader {
@@ -120,6 +122,23 @@ impl Downloader {
         summaries
     }
 
+    /// Get content length using either HEAD request or Range request based on configuration.
+    async fn get_content_length(&self, client: &ClientWithMiddleware, download: &Download) -> Result<Option<u64>, reqwest_middleware::Error> {
+        if self.use_range_for_content_length {
+            // Use range request to get content length
+            let response = client
+                .get(download.url.clone())
+                .header("Range", "bytes=0-0")
+                .send()
+                .await?;
+            
+            Ok(Some(get_content_length(&response)))
+        } else {
+            // Use the original HEAD request method
+            download.content_length(client).await
+        }
+    }
+
     /// Fetches the files and write them to disk.
     async fn fetch(
         &self,
@@ -161,7 +180,7 @@ impl Downloader {
                 };
 
                 // Retrieve the download size from the header if possible.
-                content_length = match download.content_length(client).await {
+                content_length = match self.get_content_length(client, download).await {
                     Ok(l) => l,
                     Err(e) => {
                         return summary.fail(e);
@@ -299,6 +318,24 @@ impl Downloader {
     }
 }
 
+/// Extract content length from a response, supporting both Content-Range and Content-Length headers.
+///
+/// This function first checks for a Content-Range header (from range requests) and extracts
+/// the total size. If that's not available, it falls back to the Content-Length header
+/// and adds 1 to account for the range request.
+pub fn get_content_length(response: &Response) -> u64 {
+    if let Some(content_range) = response.headers().get("Content-Range") {
+        content_range
+            .to_str()
+            .ok()
+            .and_then(|range| range.split('/').last())
+            .and_then(|size| size.parse::<u64>().ok())
+            .unwrap_or(0)
+    } else {
+        response.content_length().unwrap_or(0).saturating_add(1)
+    }
+}
+
 /// A builder used to create a [`Downloader`].
 ///
 /// ```rust
@@ -346,6 +383,15 @@ impl DownloaderBuilder {
     /// Set the downloader style options.
     pub fn style_options(mut self, style_options: StyleOptions) -> Self {
         self.0.style_options = style_options;
+        self
+    }
+
+    /// Use range requests to get content length instead of HEAD requests.
+    /// 
+    /// This is useful when servers don't provide accurate Content-Length headers
+    /// in HEAD requests but do support range requests with Content-Range responses.
+    pub fn use_range_for_content_length(mut self, use_range: bool) -> Self {
+        self.0.use_range_for_content_length = use_range;
         self
     }
 
@@ -431,6 +477,7 @@ impl DownloaderBuilder {
             style_options: self.0.style_options,
             resumable: self.0.resumable,
             headers: self.0.headers,
+            use_range_for_content_length: self.0.use_range_for_content_length,
         }
     }
 }
@@ -444,6 +491,7 @@ impl Default for DownloaderBuilder {
             style_options: StyleOptions::default(),
             resumable: true,
             headers: None,
+            use_range_for_content_length: false,
         })
     }
 }
@@ -544,8 +592,8 @@ impl ProgressBarOpts {
     pub const CHARS_LINE: &'static str = "━╾╴─";
     /// Use rough blocks as progress characters: `"█  "`.
     pub const CHARS_ROUGH: &'static str = "█  ";
-    /// Use increasing height blocks as progress characters: `"█▇▆▅▄▃▂▁  "`.
-    pub const CHARS_VERTICAL: &'static str = "█▇▆▅▄▃▂▁  ";
+    /// Use increasing height blocks as progress characters: `"█▇▆▅▄▃▂   "`.
+    pub const CHARS_VERTICAL: &'static str = "█▇▆▅▄▃▂   ";
 
     /// Create a new [`ProgressBarOpts`].
     pub fn new(
@@ -622,5 +670,14 @@ mod test {
             d.concurrent_downloads,
             Downloader::DEFAULT_CONCURRENT_DOWNLOADS
         );
+        assert_eq!(d.use_range_for_content_length, false);
+    }
+
+    #[test]
+    fn test_builder_use_range_for_content_length() {
+        let d = DownloaderBuilder::new()
+            .use_range_for_content_length(true)
+            .build();
+        assert_eq!(d.use_range_for_content_length, true);
     }
 }

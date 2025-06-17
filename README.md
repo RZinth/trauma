@@ -4,7 +4,7 @@
 [![Documentation](https://docs.rs/trauma/badge.svg)](https://docs.rs/trauma/)
 [![ci](https://github.com/rgreinho/trauma/actions/workflows/ci-rust.yml/badge.svg)](https://github.com/rgreinho/trauma/actions/workflows/ci-rust.yml)
 
-Tokio Rust Asynchronous Universal download MAnager
+Tokio Rust Asynchronous Universal download Manager
 
 ## Description
 
