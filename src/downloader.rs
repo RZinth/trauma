@@ -43,6 +43,8 @@ pub struct Downloader {
     headers: Option<HeaderMap>,
     /// Use range requests to get content length instead of HEAD requests.
     use_range_for_content_length: bool,
+    /// Hide main progress bar for single file downloads.
+    single_file_progress: bool,
 }
 
 impl Downloader {
@@ -63,6 +65,7 @@ impl Downloader {
         self.download_inner(downloads, Some(proxy)).await
     }
 
+    /// Starts the downloads.
     /// Starts the downloads.
     pub async fn download_inner(
         &self,
@@ -94,12 +97,20 @@ impl Downloader {
             true => Arc::new(MultiProgress::new()),
             false => Arc::new(MultiProgress::with_draw_target(ProgressDrawTarget::hidden())),
         };
+
+        // Determine if we should show the main progress bar
+        let show_main_progress = !self.single_file_progress || downloads.len() > 1;
+
         let main = Arc::new(
             multi.add(
-                self.style_options
-                    .main
-                    .clone()
-                    .to_progress_bar(downloads.len() as u64),
+                if show_main_progress {
+                    self.style_options
+                        .main
+                        .clone()
+                        .to_progress_bar(downloads.len() as u64)
+                } else {
+                    ProgressBar::hidden()
+                }
             ),
         );
         main.tick();
@@ -112,16 +123,18 @@ impl Downloader {
             .await;
 
         // Finish the progress bar.
-        if self.style_options.main.clear {
-            main.finish_and_clear();
-        } else {
-            main.finish();
+        if show_main_progress {
+            if self.style_options.main.clear {
+                main.finish_and_clear();
+            } else {
+                main.finish();
+            }
         }
 
         // Return the download summaries.
         summaries
     }
-
+    
     /// Get content length using either HEAD request or Range request based on configuration.
     async fn get_content_length(&self, client: &ClientWithMiddleware, download: &Download) -> Result<Option<u64>, reqwest_middleware::Error> {
         if self.use_range_for_content_length {
@@ -397,11 +410,20 @@ impl DownloaderBuilder {
     }
 
     /// Use range requests to get content length instead of HEAD requests.
-    /// 
+    ///
     /// This is useful when servers don't provide accurate Content-Length headers
     /// in HEAD requests but do support range requests with Content-Range responses.
     pub fn use_range_for_content_length(mut self, use_range: bool) -> Self {
         self.0.use_range_for_content_length = use_range;
+        self
+    }
+
+    /// Hide the main progress bar when downloading a single file.
+    ///
+    /// When enabled, only the individual file progress bar will be shown for single file downloads.
+    /// The main progress bar will still be shown when downloading multiple files.
+    pub fn single_file_progress(mut self, single_file: bool) -> Self {
+        self.0.single_file_progress = single_file;
         self
     }
 
@@ -488,9 +510,11 @@ impl DownloaderBuilder {
             resumable: self.0.resumable,
             headers: self.0.headers,
             use_range_for_content_length: self.0.use_range_for_content_length,
+            single_file_progress: self.0.single_file_progress,
         }
     }
 }
+
 
 impl Default for DownloaderBuilder {
     fn default() -> Self {
@@ -502,6 +526,7 @@ impl Default for DownloaderBuilder {
             resumable: true,
             headers: None,
             use_range_for_content_length: false,
+            single_file_progress: false,
         })
     }
 }
