@@ -178,21 +178,22 @@ impl Downloader {
                         return summary.fail(e);
                     }
                 };
-
-                // Retrieve the download size from the header if possible.
-                content_length = match self.get_content_length(client, download).await {
-                    Ok(l) => l,
-                    Err(e) => {
-                        return summary.fail(e);
-                    }
-                };
             }
 
             // Update the summary accordingly.
             summary.set_resumable(can_resume);
         }
 
-        // If resumable is turned on...
+        // Always try to get content length regardless of resume status
+        if content_length.is_none() {
+            content_length = match self.get_content_length(client, download).await {
+                Ok(l) => l,
+                Err(e) => {
+                    return summary.fail(e);
+                }
+            };
+        }
+
         // Request the file.
         debug!("Fetching {}", &download.url);
         let mut req = client.get(download.url.clone());
@@ -229,7 +230,10 @@ impl Downloader {
         };
 
         // Update the summary with the collected details.
-        let size = content_length.unwrap_or_default() + size_on_disk;
+        let size = content_length.unwrap_or_else(|| {
+            // If we still don't have content length, try to get it from the response
+            get_content_length(&res)
+        });
         let status = res.status();
         summary = Summary::new(download.clone(), status, size, can_resume);
 
@@ -251,6 +255,7 @@ impl Downloader {
                 .with_position(size_on_disk),
         );
 
+        // Rest of the method remains the same...
         // Prepare the destination directory/file.
         let output_dir = output.parent().unwrap_or(&output);
         debug!("Creating destination directory {:?}", output_dir);
