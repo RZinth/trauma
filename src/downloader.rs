@@ -66,7 +66,6 @@ impl Downloader {
     }
 
     /// Starts the downloads.
-    /// Starts the downloads.
     pub async fn download_inner(
         &self,
         downloads: &[Download],
@@ -101,19 +100,21 @@ impl Downloader {
         // Determine if we should show the main progress bar
         let show_main_progress = !self.single_file_progress || downloads.len() > 1;
 
-        let main = Arc::new(
-            multi.add(
-                if show_main_progress {
-                    self.style_options
-                        .main
-                        .clone()
-                        .to_progress_bar(downloads.len() as u64)
-                } else {
-                    ProgressBar::hidden()
-                }
-            ),
-        );
-        main.tick();
+        let main = if show_main_progress {
+            Arc::new(multi.add(
+                self.style_options
+                    .main
+                    .clone()
+                    .to_progress_bar(downloads.len() as u64)
+            ))
+        } else {
+            // Create a completely hidden progress bar that's not added to MultiProgress
+            Arc::new(ProgressBar::hidden())
+        };
+
+        if show_main_progress {
+            main.tick();
+        }
 
         // Download the files asynchronously.
         let summaries = stream::iter(downloads)
