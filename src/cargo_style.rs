@@ -49,7 +49,7 @@ impl CargoProgressStyle {
             ProgressStyle::default_bar()
                 .template("{bar:40.cyan/blue} {pos}/{len} {bytes_per_sec} {wide_msg}")
                 .unwrap()
-                .progress_chars("━╾╴") 
+                .progress_chars("━╾╴")
         );
         pb.set_message(format!("{}...", download.filename));
 
@@ -91,6 +91,9 @@ impl CargoProgressStyle {
         for (name, completed) in self.downloaded_files.iter().skip(start_idx) {
             if *completed {
                 eprintln!("  {}", style(format!("Downloaded {}", name)).green());
+            } 
+            else { 
+                // ...
             }
         }
     }
