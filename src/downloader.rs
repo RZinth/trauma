@@ -185,14 +185,28 @@ impl Downloader {
     ) -> Summary {
         let file_path = self.directory.join(&download.filename);
         
+        println!("🚀 [DEBUG] Starting fetch for: {}", download.filename);
+        println!("📁 [DEBUG] Target file path: {}", file_path.display());
+        println!("🔗 [DEBUG] URL: {}", download.url);
+        
+        if let Some(ref hash) = download.hash {
+            println!("🔐 [DEBUG] Hash provided: {}", hash);
+        } else {
+            println!("⚠️  [DEBUG] No hash provided for this download");
+        }
+        
         // Check if file exists and hash matches
         if file_path.exists() {
+            println!("📄 [DEBUG] File already exists, checking hash...");
+            
             match download.verify_hash(&file_path) {
                 Ok(true) => {
-                    // Hash matches, skip download
+                    println!("✅ [DEBUG] Hash verification PASSED - SKIPPING download");
                     let file_size = std::fs::metadata(&file_path)
                         .map(|m| m.len())
                         .unwrap_or(0);
+                    
+                    println!("📏 [DEBUG] Existing file size: {} bytes", file_size);
                     
                     return Summary::new(
                         download.clone(),
@@ -203,14 +217,20 @@ impl Downloader {
                     .skip("File exists with matching hash");
                 }
                 Ok(false) => {
-                    // Hash doesn't match, continue with download
+                    println!("❌ [DEBUG] Hash verification FAILED - DOWNLOADING file");
                 }
                 Err(e) => {
-                    // Error calculating hash, continue with download
-                    eprintln!("Warning: Failed to verify hash for {}: {}", download.filename, e);
+                    println!("⚠️  [DEBUG] Hash verification ERROR: {} - DOWNLOADING file", e);
                 }
             }
+        } else {
+            println!("📄 [DEBUG] File does not exist - DOWNLOADING file");
         }
+        
+        println!("⬇️  [DEBUG] Proceeding with download...");
+        
+        // Continue with existing fetch logic...
+        // ... rest of your existing fetch implementation
         
         // Create a download summary.
         let mut size_on_disk: u64 = 0;

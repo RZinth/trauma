@@ -66,44 +66,71 @@ impl Download {
         }
     }
 
-    /// Detect hash type based on the hash string format.
-    /// MD5 hashes are 32 hex characters, CRC32 can be detected by trying to parse as number.
-    pub fn detect_hash_type(hash: &str) -> Option<HashType> {
-        if hash.len() == 32 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
-            Some(HashType::Md5)
-        } else if hash.parse::<u32>().is_ok() {
-            Some(HashType::Crc32)
-        } else {
-            None
-        }
-    }
-
     /// Calculate hash of local file and compare with expected hash.
     /// Returns true if hashes match or if no hash is provided.
     pub fn verify_hash(&self, file_path: &PathBuf) -> Result<bool, Box<dyn std::error::Error>> {
+        println!("🔍 [DEBUG] Starting hash verification for: {}", file_path.display());
+        
         let Some(expected_hash) = &self.hash else {
+            println!("⚠️  [DEBUG] No hash provided for {}, considering valid", file_path.display());
             return Ok(true);
         };
 
+        println!("🔢 [DEBUG] Expected hash: {}", expected_hash);
+
         if !file_path.exists() {
+            println!("❌ [DEBUG] File does not exist: {}", file_path.display());
             return Ok(false);
         }
 
-        match Self::detect_hash_type(expected_hash) {
+        let hash_type = Self::detect_hash_type(expected_hash);
+        println!("🔎 [DEBUG] Detected hash type: {:?}", hash_type);
+
+        match hash_type {
             Some(HashType::Md5) => {
+                println!("🧮 [DEBUG] Calculating MD5 hash for: {}", file_path.display());
                 let calculated_hash = calculate_md5(file_path.clone())?;
-                Ok(calculated_hash.to_lowercase() == expected_hash.to_lowercase())
+                println!("📊 [DEBUG] Calculated MD5: {}", calculated_hash);
+                println!("📊 [DEBUG] Expected MD5:   {}", expected_hash);
+                
+                let matches = calculated_hash.to_lowercase() == expected_hash.to_lowercase();
+                println!("✅ [DEBUG] MD5 hashes match: {}", matches);
+                Ok(matches)
             }
             Some(HashType::Crc32) => {
+                println!("🧮 [DEBUG] Calculating CRC32 hash for: {}", file_path.display());
                 let calculated_hash = calculate_crc32(file_path.clone())?;
                 let expected_crc32: u32 = expected_hash.parse()
                     .map_err(|_| "Invalid CRC32 format")?;
-                Ok(calculated_hash == expected_crc32)
+                println!("📊 [DEBUG] Calculated CRC32: {}", calculated_hash);
+                println!("📊 [DEBUG] Expected CRC32:   {}", expected_crc32);
+                
+                let matches = calculated_hash == expected_crc32;
+                println!("✅ [DEBUG] CRC32 hashes match: {}", matches);
+                Ok(matches)
             }
             None => {
-                // Unknown hash format, consider it invalid
+                println!("❌ [DEBUG] Unknown hash format: {}", expected_hash);
                 Ok(false)
             }
+        }
+    }
+
+    /// Detect hash type based on the hash string format.
+    /// MD5 hashes are 32 hex characters, CRC32 can be detected by trying to parse as number.
+    pub fn detect_hash_type(hash: &str) -> Option<HashType> {
+        println!("🔍 [DEBUG] Detecting hash type for: '{}'", hash);
+        println!("🔍 [DEBUG] Hash length: {}", hash.len());
+        
+        if hash.len() == 32 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            println!("🔍 [DEBUG] Detected as MD5 (32 hex chars)");
+            Some(HashType::Md5)
+        } else if hash.parse::<u32>().is_ok() {
+            println!("🔍 [DEBUG] Detected as CRC32 (numeric)");
+            Some(HashType::Crc32)
+        } else {
+            println!("🔍 [DEBUG] Unknown hash format");
+            None
         }
     }
 
