@@ -3,7 +3,6 @@
 
 pub mod download;
 pub mod downloader;
-pub mod cargo_style;
 
 use std::io;
 use thiserror::Error;
