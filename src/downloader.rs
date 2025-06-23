@@ -16,9 +16,6 @@ use tracing::debug;
 
 pub struct TimeTrace;
 
-/// Callback type for download completion events
-pub type DownloadCallback = Box<dyn Fn(&Summary) + Send + Sync>;
-
 /// Represents the download controller.
 ///
 /// A downloader can be created via its builder:
@@ -30,7 +27,7 @@ pub type DownloadCallback = Box<dyn Fn(&Summary) + Send + Sync>;
 /// let d = DownloaderBuilder::new().build();
 /// # }
 /// ```
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct Downloader {
     /// Directory where to store the downloaded files.
     directory: PathBuf,
@@ -48,24 +45,6 @@ pub struct Downloader {
     use_range_for_content_length: bool,
     /// Hide main progress bar for single file downloads.
     single_file_progress: bool,
-    /// Callback for when each download completes.
-    on_complete: Option<Arc<DownloadCallback>>,
-}
-
-impl std::fmt::Debug for Downloader {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Downloader")
-            .field("directory", &self.directory)
-            .field("retries", &self.retries)
-            .field("concurrent_downloads", &self.concurrent_downloads)
-            .field("style_options", &self.style_options)
-            .field("resumable", &self.resumable)
-            .field("headers", &self.headers)
-            .field("use_range_for_content_length", &self.use_range_for_content_length)
-            .field("single_file_progress", &self.single_file_progress)
-            .field("on_complete", &self.on_complete.is_some())
-            .finish()
-    }
 }
 
 impl Downloader {
@@ -112,7 +91,31 @@ impl Downloader {
             .with(RetryTransientMiddleware::new_with_policy(retry_policy))
             .build();
 
-        // Prepare the progress bar.
+        // Check if we're using cargo-style progress
+        if self.style_options.cargo_style {
+            // Create cargo-style progress
+            let cargo_progress = Arc::new(tokio::sync::Mutex::new(
+                crate::cargo_style::CargoProgressStyle::new(downloads.len())
+            ));
+
+            // Download the files asynchronously with cargo-style progress
+            let summaries = stream::iter(downloads)
+                .map(|d| self.fetch_with_cargo_style(&client, d, cargo_progress.clone()))
+                .buffer_unordered(self.concurrent_downloads)
+                .collect::<Vec<_>>()
+                .await;
+
+            // Finish the progress display
+            let progress_clone = cargo_progress.clone();
+            if let Ok(mut guard) = progress_clone.try_lock() {
+                guard.finish();
+            }
+
+            // Return the download summaries
+            return summaries;
+        }
+
+        // Standard progress bar implementation
         let multi = match self.style_options.clone().is_enabled() {
             true => Arc::new(MultiProgress::new()),
             false => Arc::new(MultiProgress::with_draw_target(ProgressDrawTarget::hidden())),
@@ -174,6 +177,187 @@ impl Downloader {
         }
     }
 
+    /// Fetches files with cargo-style progress display
+    async fn fetch_with_cargo_style(
+        &self,
+        client: &ClientWithMiddleware,
+        download: &Download,
+        cargo_progress: Arc<tokio::sync::Mutex<crate::cargo_style::CargoProgressStyle>>,
+    ) -> Summary {
+        // Create a download summary.
+        let mut size_on_disk: u64 = 0;
+        let mut can_resume = false;
+        let output = self.directory.join(&download.filename);
+        let mut summary = Summary::new(
+            download.clone(),
+            StatusCode::BAD_REQUEST,
+            size_on_disk,
+            can_resume,
+        );
+
+        // If resumable is turned on...
+        if self.resumable {
+            can_resume = match download.is_resumable(client).await {
+                Ok(r) => r,
+                Err(e) => {
+                    return summary.fail(e);
+                }
+            };
+
+            // Check if there is a file on disk already.
+            if can_resume && output.exists() {
+                debug!("A file with the same name already exists at the destination.");
+                // If so, check file length to know where to restart the download from.
+                size_on_disk = match output.metadata() {
+                    Ok(m) => m.len(),
+                    Err(e) => {
+                        return summary.fail(e);
+                    }
+                };
+            }
+
+            // Update the summary accordingly.
+            summary.set_resumable(can_resume);
+        }
+
+        // Try to get content length
+        let content_length = match self.get_content_length(client, download).await {
+            Ok(l) => l,
+            Err(e) => {
+                return summary.fail(e);
+            }
+        };
+
+        // Request the file.
+        debug!("Fetching {}", &download.url);
+        let mut req = client.get(download.url.clone());
+        if self.resumable && can_resume {
+            req = req.header(RANGE, format!("bytes={}-", size_on_disk));
+        }
+
+        // Add extra headers if needed.
+        if let Some(ref h) = self.headers {
+            req = req.headers(h.to_owned());
+        }
+
+        // Ensure there was no error while sending the request.
+        let res = match req.send().await {
+            Ok(res) => res,
+            Err(e) => {
+                return summary.fail(e);
+            }
+        };
+
+        // Check wether or not we need to download the file.
+        if let Some(content_length) = content_length {
+            if content_length == size_on_disk {
+                // Add to progress display as already downloaded
+                let mut progress = cargo_progress.lock().await;
+                let pb = progress.add_download(download);
+                progress.complete_download(&download.filename);
+                drop(progress);
+
+                return summary.with_status(Status::Skipped(
+                    "the file was already fully downloaded".into(),
+                ));
+            }
+        }
+
+        // Check the status for errors.
+        match res.error_for_status_ref() {
+            Ok(_res) => (),
+            Err(e) => return summary.fail(e),
+        };
+
+        // Update the summary with the collected details.
+        let size = content_length.unwrap_or_else(|| {
+            // If we still don't have content length, try to get it from the response
+            get_content_length(&res)
+        });
+        let status = res.status();
+        summary = Summary::new(download.clone(), status, size, can_resume);
+
+        // If there is nothing else to download for this file, we can return.
+        if size_on_disk > 0 && size == size_on_disk {
+            // Add to progress display as already downloaded
+            let mut progress = cargo_progress.lock().await;
+            let pb = progress.add_download(download);
+            progress.complete_download(&download.filename);
+            drop(progress);
+
+            return summary.with_status(Status::Skipped(
+                "the file was already fully downloaded".into(),
+            ));
+        }
+
+        // Add this download to the cargo progress display
+        let mut progress = cargo_progress.lock().await;
+        let pb = progress.add_download(download);
+        // Update total bytes in main progress bar
+        progress.set_total_bytes(size);
+        drop(progress);
+
+        // Prepare the destination directory/file.
+        let output_dir = output.parent().unwrap_or(&output);
+        debug!("Creating destination directory {:?}", output_dir);
+        match fs::create_dir_all(output_dir) {
+            Ok(_res) => (),
+            Err(e) => {
+                return summary.fail(e);
+            }
+        };
+
+        debug!("Creating destination file {:?}", &output);
+        let mut file = match OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(can_resume)
+            .open(output)
+            .await
+        {
+            Ok(file) => file,
+            Err(e) => {
+                return summary.fail(e);
+            }
+        };
+
+        let mut final_size = size_on_disk;
+
+        // Download the file chunk by chunk.
+        debug!("Retrieving chunks...");
+        let mut stream = res.bytes_stream();
+        while let Some(item) = stream.next().await {
+            // Retrieve chunk.
+            let mut chunk = match item {
+                Ok(chunk) => chunk,
+                Err(e) => {
+                    return summary.fail(e);
+                }
+            };
+            let chunk_size = chunk.len() as u64;
+            final_size += chunk_size;
+            pb.inc(chunk_size);
+
+            // Write the chunk to disk.
+            match file.write_all_buf(&mut chunk).await {
+                Ok(_res) => (),
+                Err(e) => {
+                    return summary.fail(e);
+                }
+            };
+        }
+
+        // Mark as completed in cargo progress
+        let mut progress = cargo_progress.lock().await;
+        progress.complete_download(&download.filename);
+        drop(progress);
+
+        // Create a new summary with the real download size
+        let summary = Summary::new(download.clone(), status, final_size, can_resume);
+        // Return the download summary.
+        summary.with_status(Status::Success)
+    }
+
     /// Fetches the files and write them to disk.
     async fn fetch(
         &self,
@@ -199,12 +383,7 @@ impl Downloader {
             can_resume = match download.is_resumable(client).await {
                 Ok(r) => r,
                 Err(e) => {
-                    let summary = summary.fail(e);
-                    // Call the callback for failed downloads
-                    if let Some(ref callback) = self.on_complete {
-                        callback(&summary);
-                    }
-                    return summary;
+                    return summary.fail(e);
                 }
             };
 
@@ -215,12 +394,7 @@ impl Downloader {
                 size_on_disk = match output.metadata() {
                     Ok(m) => m.len(),
                     Err(e) => {
-                        let summary = summary.fail(e);
-                        // Call the callback for failed downloads
-                        if let Some(ref callback) = self.on_complete {
-                            callback(&summary);
-                        }
-                        return summary;
+                        return summary.fail(e);
                     }
                 };
             }
@@ -234,12 +408,7 @@ impl Downloader {
             content_length = match self.get_content_length(client, download).await {
                 Ok(l) => l,
                 Err(e) => {
-                    let summary = summary.fail(e);
-                    // Call the callback for failed downloads
-                    if let Some(ref callback) = self.on_complete {
-                        callback(&summary);
-                    }
-                    return summary;
+                    return summary.fail(e);
                 }
             };
         }
@@ -260,40 +429,23 @@ impl Downloader {
         let res = match req.send().await {
             Ok(res) => res,
             Err(e) => {
-                let summary = summary.fail(e);
-                // Call the callback for failed downloads
-                if let Some(ref callback) = self.on_complete {
-                    callback(&summary);
-                }
-                return summary;
+                return summary.fail(e);
             }
         };
 
         // Check wether or not we need to download the file.
         if let Some(content_length) = content_length {
             if content_length == size_on_disk {
-                let summary = summary.with_status(Status::Skipped(
+                return summary.with_status(Status::Skipped(
                     "the file was already fully downloaded".into(),
                 ));
-                // Call the callback for skipped downloads
-                if let Some(ref callback) = self.on_complete {
-                    callback(&summary);
-                }
-                return summary;
             }
         }
 
         // Check the status for errors.
         match res.error_for_status_ref() {
             Ok(_res) => (),
-            Err(e) => {
-                let summary = summary.fail(e);
-                // Call the callback for failed downloads
-                if let Some(ref callback) = self.on_complete {
-                    callback(&summary);
-                }
-                return summary;
-            }
+            Err(e) => return summary.fail(e),
         };
 
         // Update the summary with the collected details.
@@ -306,14 +458,9 @@ impl Downloader {
 
         // If there is nothing else to download for this file, we can return.
         if size_on_disk > 0 && size == size_on_disk {
-            let summary = summary.with_status(Status::Skipped(
+            return summary.with_status(Status::Skipped(
                 "the file was already fully downloaded".into(),
             ));
-            // Call the callback for skipped downloads
-            if let Some(ref callback) = self.on_complete {
-                callback(&summary);
-            }
-            return summary;
         }
 
         // Create the progress bar.
@@ -327,18 +474,14 @@ impl Downloader {
                 .with_position(size_on_disk),
         );
 
+        // Rest of the method remains the same...
         // Prepare the destination directory/file.
         let output_dir = output.parent().unwrap_or(&output);
         debug!("Creating destination directory {:?}", output_dir);
         match fs::create_dir_all(output_dir) {
             Ok(_res) => (),
             Err(e) => {
-                let summary = summary.fail(e);
-                // Call the callback for failed downloads
-                if let Some(ref callback) = self.on_complete {
-                    callback(&summary);
-                }
-                return summary;
+                return summary.fail(e);
             }
         };
 
@@ -352,12 +495,7 @@ impl Downloader {
         {
             Ok(file) => file,
             Err(e) => {
-                let summary = summary.fail(e);
-                // Call the callback for failed downloads
-                if let Some(ref callback) = self.on_complete {
-                    callback(&summary);
-                }
-                return summary;
+                return summary.fail(e);
             }
         };
 
@@ -371,12 +509,7 @@ impl Downloader {
             let mut chunk = match item {
                 Ok(chunk) => chunk,
                 Err(e) => {
-                    let summary = summary.fail(e);
-                    // Call the callback for failed downloads
-                    if let Some(ref callback) = self.on_complete {
-                        callback(&summary);
-                    }
-                    return summary;
+                    return summary.fail(e);
                 }
             };
             let chunk_size = chunk.len() as u64;
@@ -387,29 +520,13 @@ impl Downloader {
             match file.write_all_buf(&mut chunk).await {
                 Ok(_res) => (),
                 Err(e) => {
-                    let summary = summary.fail(e);
-                    // Call the callback for failed downloads
-                    if let Some(ref callback) = self.on_complete {
-                        callback(&summary);
-                    }
-                    return summary;
+                    return summary.fail(e);
                 }
             };
         }
 
-        // Create a new summary with the real download size and success status
-        let summary = Summary::new(download.clone(), status, final_size, can_resume)
-            .with_status(Status::Success);
-        
-        // IMPORTANT: Call the callback BEFORE clearing the child progress bar
-        // This ensures the callback message is displayed before the progress bar is cleared
-        if let Some(ref callback) = self.on_complete {
-            callback(&summary);
-        }
-
-        // Now finish the progress bar and optionally clear it
-        // The callback has already been executed, so clearing won't affect the message
-        if self.style_options.child.clear_on_complete {
+        // Finish the progress bar once complete, and optionally remove it.
+        if self.style_options.child.clear {
             pb.finish_and_clear();
         } else {
             pb.finish();
@@ -418,8 +535,10 @@ impl Downloader {
         // Advance the main progress bar.
         main.inc(1);
 
+        // Create a new summary with the real download size
+        let summary = Summary::new(download.clone(), status, final_size, can_resume);
         // Return the download summary.
-        summary
+        summary.with_status(Status::Success)
     }
 }
 
@@ -514,42 +633,6 @@ impl DownloaderBuilder {
         self
     }
 
-    /// Set callback for when each download completes.
-    ///
-    /// The callback will be called immediately when each download finishes,
-    /// regardless of whether other downloads are still in progress.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// use trauma::downloader::DownloaderBuilder;
-    /// use trauma::download::Status;
-    ///
-    /// let downloader = DownloaderBuilder::new()
-    ///     .on_complete(|summary| {
-    ///         match summary.status() {
-    ///             Status::Success => {
-    ///                 println!("[Success] {} Downloaded", summary.download().filename);
-    ///             }
-    ///             Status::Fail(error) => {
-    ///                 println!("[Failed] {} - Error: {}", summary.download().filename, error);
-    ///             }
-    ///             Status::Skipped(reason) => {
-    ///                 println!("[Skipped] {} - {}", summary.download().filename, reason);
-    ///             }
-    ///             _ => {}
-    ///         }
-    ///     })
-    ///     .build();
-    /// ```
-    pub fn on_complete<F>(mut self, callback: F) -> Self 
-    where 
-        F: Fn(&Summary) + Send + Sync + 'static 
-    {
-        self.0.on_complete = Some(Arc::new(Box::new(callback)));
-        self
-    }
-
     fn new_header(&self) -> HeaderMap {
         match self.0.headers {
             Some(ref h) => h.to_owned(),
@@ -623,6 +706,15 @@ impl DownloaderBuilder {
         self
     }
 
+    /// Enable cargo-style progress display
+    /// 
+    /// This style shows a list of downloaded files followed by a progress bar,
+    /// similar to cargo's download style when installing dependencies.
+    pub fn cargo_style(mut self) -> Self {
+        self.0.style_options = StyleOptions::with_cargo_style();
+        self
+    }
+
     /// Create the [`Downloader`] with the specified options.
     pub fn build(self) -> Downloader {
         Downloader {
@@ -634,7 +726,6 @@ impl DownloaderBuilder {
             headers: self.0.headers,
             use_range_for_content_length: self.0.use_range_for_content_length,
             single_file_progress: self.0.single_file_progress,
-            on_complete: self.0.on_complete,
         }
     }
 }
@@ -651,7 +742,6 @@ impl Default for DownloaderBuilder {
             headers: None,
             use_range_for_content_length: false,
             single_file_progress: false,
-            on_complete: None,
         })
     }
 }
@@ -666,6 +756,8 @@ pub struct StyleOptions {
     main: ProgressBarOpts,
     /// Style options for the child progress bar(s).
     child: ProgressBarOpts,
+    /// Use cargo-style progress display (overrides main and child styles when enabled)
+    cargo_style: bool,
 }
 
 impl Default for StyleOptions {
@@ -676,9 +768,9 @@ impl Default for StyleOptions {
                 progress_chars: Some(ProgressBarOpts::CHARS_FINE.into()),
                 enabled: true,
                 clear: false,
-                clear_on_complete: false,
             },
             child: ProgressBarOpts::with_pip_style(),
+            cargo_style: false,
         }
     }
 }
@@ -686,7 +778,16 @@ impl Default for StyleOptions {
 impl StyleOptions {
     /// Create new [`Downloader`] [`StyleOptions`].
     pub fn new(main: ProgressBarOpts, child: ProgressBarOpts) -> Self {
-        Self { main, child }
+        Self { main, child, cargo_style: false }
+    }
+
+    /// Create new [`Downloader`] [`StyleOptions`] with cargo-style progress display.
+    pub fn with_cargo_style() -> Self {
+        Self {
+            main: ProgressBarOpts::default(),
+            child: ProgressBarOpts::default(),
+            cargo_style: true,
+        }
     }
 
     /// Set the options for the main progress bar.
@@ -719,9 +820,6 @@ pub struct ProgressBarOpts {
     enabled: bool,
     /// Clear the progress bar once completed.
     clear: bool,
-    /// Clear the progress bar on completion without affecting callback messages.
-    /// When true, the progress bar will be cleared after the callback is executed.
-    clear_on_complete: bool,
 }
 
 impl Default for ProgressBarOpts {
@@ -731,7 +829,6 @@ impl Default for ProgressBarOpts {
             progress_chars: None,
             enabled: true,
             clear: true,
-            clear_on_complete: true, // Default to true to maintain existing behavior
         }
     }
 }
@@ -772,7 +869,6 @@ impl ProgressBarOpts {
             progress_chars,
             enabled,
             clear,
-            clear_on_complete: clear, // Set clear_on_complete to match clear by default
         }
     }
 
@@ -807,29 +903,12 @@ impl ProgressBarOpts {
             progress_chars: Some(ProgressBarOpts::CHARS_LINE.into()),
             enabled: true,
             clear: true,
-            clear_on_complete: true,
         }
     }
 
     /// Set to `true` to clear the progress bar upon completion.
     pub fn set_clear(&mut self, clear: bool) {
         self.clear = clear;
-        self.clear_on_complete = clear; // Keep them in sync by default
-    }
-
-    /// Set to `true` to clear the progress bar on completion without affecting callback messages.
-    /// 
-    /// This provides fine-grained control over when the progress bar is cleared.
-    /// When set to `false`, the progress bar will remain visible after download completion,
-    /// allowing callback messages to be displayed above it.
-    pub fn set_clear_on_complete(&mut self, clear_on_complete: bool) {
-        self.clear_on_complete = clear_on_complete;
-    }
-
-    /// Builder method to set clear_on_complete.
-    pub fn with_clear_on_complete(mut self, clear_on_complete: bool) -> Self {
-        self.clear_on_complete = clear_on_complete;
-        self
     }
 
     /// Create a new [`ProgressBarOpts`] which hides the progress bars.

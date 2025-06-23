@@ -1,6 +1,6 @@
 [package]
 name = "trauma"
-version = "2.4.0"
+version = "2.4.2"
 edition = "2021"
 license = "MIT"
 description = "Simplify and prettify HTTP downloads"
@@ -24,18 +24,15 @@ reqwest = { version = "0.12.4", default-features = false, features = [
 reqwest-middleware = "0.4.2"
 reqwest-retry = "0.7.0"
 reqwest-tracing = { version = "0.5.7", features = ["opentelemetry_0_22"] }
-task-local-extensions = "0.1.3"
 thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.41"
-tracing-opentelemetry = "0.31.0"
 tracing-subscriber = "0.3.19"
+console = "0.15.11"
 
 [dev-dependencies]
 color-eyre = "0.6.5"
 comfy-table = "7.1.4"
-console = "0.15.11"
-opentelemetry = "0.30.0"
 rand = "0.9.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
