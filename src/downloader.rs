@@ -293,8 +293,14 @@ impl Downloader {
         // Add this download to the cargo progress display
         let mut progress = cargo_progress.lock().await;
         let pb = progress.add_download(download);
-        // Update total bytes in main progress bar
-        progress.set_total_bytes(size);
+        // Update total bytes in current download progress bar
+        if size > 0 {
+            progress.set_total_bytes(size);
+            // Update progress bar position if we're resuming
+            if size_on_disk > 0 {
+                pb.set_position(size_on_disk);
+            }
+        }
         drop(progress);
 
         // Prepare the destination directory/file.

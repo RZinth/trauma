@@ -28,7 +28,7 @@ impl CargoProgressStyle {
         let main_bar = multi.add(ProgressBar::new(total_files as u64));
         main_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} Downloading {len} files, remaining bytes: {bytes_precise}")
+                .template("{spinner:.green} {pos}/{len} files downloaded")
                 .unwrap()
                 .progress_chars("━━━")  // Unicode box-drawing characters
         );
@@ -105,15 +105,15 @@ impl CargoProgressStyle {
         for (name, completed) in self.downloaded_files.iter().skip(start_idx) {
             if *completed {
                 eprintln!("  {}", style(format!("Downloaded {}", name)).green());
-            } else {
-                eprintln!("  Downloading {}", name);
             }
         }
     }
 
-    /// Set total bytes for the main progress bar
+    /// Set total bytes for the current download progress bar
     pub fn set_total_bytes(&self, bytes: u64) {
-        self.main_bar.set_length(bytes);
+        if let Some(bar) = &self.current_bar {
+            bar.set_length(bytes);
+        }
     }
 
     /// Finish the progress display
