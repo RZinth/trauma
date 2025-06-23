@@ -15,8 +15,8 @@ pub struct CargoProgressStyle {
     multi: Arc<MultiProgress>,
     /// Main progress bar for total progress
     main_bar: Arc<ProgressBar>,
-    /// Active download progress bars (filename -> progress bar)
-    active_bars: std::collections::HashMap<String, ProgressBar>,
+    /// Current active download progress bar
+    current_bar: Option<ProgressBar>,
 }
 
 impl CargoProgressStyle {
@@ -24,43 +24,37 @@ impl CargoProgressStyle {
     pub fn new(total_files: usize) -> Self {
         let multi = Arc::new(MultiProgress::new());
 
-        // Create the main progress bar that shows at the bottom
         let main_bar = multi.add(ProgressBar::new(total_files as u64));
         main_bar.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} {pos}/{len} files downloaded")
+                .template("{spinner:.green} Downloading {pos}/{len} files")
                 .unwrap()
-                .progress_chars("━━━")  // Unicode box-drawing characters
         );
 
         Self {
-            max_displayed_files: 15,  // Show at most 15 downloaded files
+            max_displayed_files: 10,
             downloaded_files: Vec::with_capacity(total_files),
             multi,
             main_bar: Arc::new(main_bar),
-            active_bars: std::collections::HashMap::new(),
+            current_bar: None,
         }
     }
 
     /// Adds a new download to the list
     pub fn add_download(&mut self, download: &Download) -> ProgressBar {
-        // Add to our tracking list
         self.downloaded_files.push((download.filename.clone(), false));
 
-        // Create a progress bar for the current download
         let pb = self.multi.add(ProgressBar::new(0));
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{spinner:.green} {bar:40.cyan/blue} {bytes}/{total_bytes} {bytes_per_sec} {msg:.cyan}")
+                .template("{bar:40.cyan/blue} {pos}/{len} {bytes_per_sec} {wide_msg}")
                 .unwrap()
-                .progress_chars("━━━")  // Unicode box-drawing characters
+                .progress_chars("━╾╴") 
         );
         pb.set_message(format!("{}...", download.filename));
 
-            // Store this progress bar in our active bars
-            self.active_bars.insert(download.filename.clone(), pb.clone());
+        self.current_bar = Some(pb.clone());
 
-        // Redraw the display to show the updated list
         self.redraw();
 
         pb
@@ -68,59 +62,46 @@ impl CargoProgressStyle {
 
     /// Mark a download as completed
     pub fn complete_download(&mut self, filename: &str) {
-        // Mark the download as completed in our list
         if let Some(idx) = self.downloaded_files.iter().position(|(name, _)| name == filename) {
             self.downloaded_files[idx].1 = true;
         }
 
-        // Advance the main progress bar
         self.main_bar.inc(1);
 
-        // Finish the progress bar for this file
-        if let Some(bar) = self.active_bars.remove(filename) {
+        if let Some(bar) = &self.current_bar {
             bar.finish_and_clear();
         }
 
-        // Display the completed download
-        eprintln!("  {}", style(format!("Downloaded {}", filename)).green());
-
-        // Redraw the display for remaining active downloads
         self.redraw();
     }
 
     /// Redraw the entire display
     fn redraw(&self) {
-        // We don't need to clear or redraw completed downloads - they stay in terminal history
-        // and are only printed when explicitly completed
+        let display_count = self.max_displayed_files.min(self.downloaded_files.len());
 
-        // We only need to update the active progress bars
-        // The MultiProgress handles positioning of the active bars
+        if !self.downloaded_files.is_empty() {
+            let lines_to_clear = display_count + if self.current_bar.is_some() { 1 } else { 0 };
+            for _ in 0..lines_to_clear {
+                eprint!("\x1B[1A");
+                eprint!("\x1B[2K");
+            }
+        }
 
-        // The main progress bar will show at the bottom after any active downloads
-        self.main_bar.tick();
-
-        // For active downloads, ensure they're properly updated
-        for bar in self.active_bars.values() {
-            bar.tick();
+        let start_idx = self.downloaded_files.len().saturating_sub(display_count);
+        for (name, completed) in self.downloaded_files.iter().skip(start_idx) {
+            if *completed {
+                eprintln!("  {}", style(format!("Downloaded {}", name)).green());
+            }
         }
     }
 
-    /// Set total bytes for a specific download progress bar
-    pub fn set_total_bytes(&self, download_name: &str, bytes: u64) {
-        if let Some(bar) = self.active_bars.get(download_name) {
-            bar.set_length(bytes);
-        }
+    /// Set total bytes for the main progress bar
+    pub fn set_total_bytes(&self, bytes: u64) {
+        self.main_bar.set_length(bytes);
     }
 
     /// Finish the progress display
     pub fn finish(&mut self) {
-        // Clear all active progress bars
-        for bar in self.active_bars.values() {
-            bar.finish_and_clear();
-        }
-        self.active_bars.clear();
-
-        // Finish the main progress bar
         self.main_bar.finish_and_clear();
     }
 }
