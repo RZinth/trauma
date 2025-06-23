@@ -185,29 +185,14 @@ impl Downloader {
     ) -> Summary {
         let file_path = self.directory.join(&download.filename);
         
-        println!("🚀 [DEBUG] Starting fetch for: {}", download.filename);
-        println!("📁 [DEBUG] Target file path: {}", file_path.display());
-        println!("🔗 [DEBUG] URL: {}", download.url);
-        
-        if let Some(ref hash) = download.hash {
-            println!("🔐 [DEBUG] Hash provided: {}", hash);
-        } else {
-            println!("⚠️  [DEBUG] No hash provided for this download");
-        }
-        
         // Check if file exists and hash matches
         if file_path.exists() {
-            println!("📄 [DEBUG] File already exists, checking hash...");
-            
             match download.verify_hash(&file_path) {
                 Ok(true) => {
-                    println!("✅ [DEBUG] Hash verification PASSED - SKIPPING download");
                     let file_size = std::fs::metadata(&file_path)
                         .map(|m| m.len())
                         .unwrap_or(0);
-                    
-                    println!("📏 [DEBUG] Existing file size: {} bytes", file_size);
-                    
+                
                     return Summary::new(
                         download.clone(),
                         StatusCode::OK,
@@ -217,20 +202,29 @@ impl Downloader {
                     .skip("File exists with matching hash");
                 }
                 Ok(false) => {
-                    println!("❌ [DEBUG] Hash verification FAILED - DOWNLOADING file");
+                    // Hash verification failed - create a hash mismatch summary and call callback
+                    let file_size = std::fs::metadata(&file_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                
+                    let hash_mismatch_summary = Summary::new(
+                        download.clone(),
+                        StatusCode::OK,
+                        file_size,
+                        false,
+                    )
+                    .hash_mismatch("Hash mismatch, redownloading file");
+                
+                    // Call the callback for hash mismatch
+                    if let Some(ref callback) = self.on_complete {
+                        callback(&hash_mismatch_summary);
+                    }
                 }
-                Err(e) => {
-                    println!("⚠️  [DEBUG] Hash verification ERROR: {} - DOWNLOADING file", e);
+                Err(_) => {
+                    // Error calculating hash, continue to download
                 }
             }
-        } else {
-            println!("📄 [DEBUG] File does not exist - DOWNLOADING file");
         }
-        
-        println!("⬇️  [DEBUG] Proceeding with download...");
-        
-        // Continue with existing fetch logic...
-        // ... rest of your existing fetch implementation
         
         // Create a download summary.
         let mut size_on_disk: u64 = 0;

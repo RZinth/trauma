@@ -59,6 +59,10 @@ fn display_summary(summaries: &[Summary]) {
                 error = s.to_string();
                 String::from("⏭️")
             }
+            Status::HashMismatch(s) => {
+                error = s.to_string();
+                String::from("...")
+            }
         };
         table.add_row(vec![
             &s.download().filename,
