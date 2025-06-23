@@ -327,7 +327,6 @@ impl Downloader {
                 .with_position(size_on_disk),
         );
 
-        // Rest of the method remains the same...
         // Prepare the destination directory/file.
         let output_dir = output.parent().unwrap_or(&output);
         debug!("Creating destination directory {:?}", output_dir);
@@ -398,8 +397,19 @@ impl Downloader {
             };
         }
 
-        // Finish the progress bar once complete, and optionally remove it.
-        if self.style_options.child.clear {
+        // Create a new summary with the real download size and success status
+        let summary = Summary::new(download.clone(), status, final_size, can_resume)
+            .with_status(Status::Success);
+        
+        // IMPORTANT: Call the callback BEFORE clearing the child progress bar
+        // This ensures the callback message is displayed before the progress bar is cleared
+        if let Some(ref callback) = self.on_complete {
+            callback(&summary);
+        }
+
+        // Now finish the progress bar and optionally clear it
+        // The callback has already been executed, so clearing won't affect the message
+        if self.style_options.child.clear_on_complete {
             pb.finish_and_clear();
         } else {
             pb.finish();
@@ -407,15 +417,6 @@ impl Downloader {
 
         // Advance the main progress bar.
         main.inc(1);
-
-        // Create a new summary with the real download size and success status
-        let summary = Summary::new(download.clone(), status, final_size, can_resume)
-            .with_status(Status::Success);
-        
-        // Call the callback for successful downloads
-        if let Some(ref callback) = self.on_complete {
-            callback(&summary);
-        }
 
         // Return the download summary.
         summary
@@ -675,6 +676,7 @@ impl Default for StyleOptions {
                 progress_chars: Some(ProgressBarOpts::CHARS_FINE.into()),
                 enabled: true,
                 clear: false,
+                clear_on_complete: false,
             },
             child: ProgressBarOpts::with_pip_style(),
         }
@@ -717,6 +719,9 @@ pub struct ProgressBarOpts {
     enabled: bool,
     /// Clear the progress bar once completed.
     clear: bool,
+    /// Clear the progress bar on completion without affecting callback messages.
+    /// When true, the progress bar will be cleared after the callback is executed.
+    clear_on_complete: bool,
 }
 
 impl Default for ProgressBarOpts {
@@ -726,6 +731,7 @@ impl Default for ProgressBarOpts {
             progress_chars: None,
             enabled: true,
             clear: true,
+            clear_on_complete: true, // Default to true to maintain existing behavior
         }
     }
 }
@@ -766,6 +772,7 @@ impl ProgressBarOpts {
             progress_chars,
             enabled,
             clear,
+            clear_on_complete: clear, // Set clear_on_complete to match clear by default
         }
     }
 
@@ -800,12 +807,29 @@ impl ProgressBarOpts {
             progress_chars: Some(ProgressBarOpts::CHARS_LINE.into()),
             enabled: true,
             clear: true,
+            clear_on_complete: true,
         }
     }
 
     /// Set to `true` to clear the progress bar upon completion.
     pub fn set_clear(&mut self, clear: bool) {
         self.clear = clear;
+        self.clear_on_complete = clear; // Keep them in sync by default
+    }
+
+    /// Set to `true` to clear the progress bar on completion without affecting callback messages.
+    /// 
+    /// This provides fine-grained control over when the progress bar is cleared.
+    /// When set to `false`, the progress bar will remain visible after download completion,
+    /// allowing callback messages to be displayed above it.
+    pub fn set_clear_on_complete(&mut self, clear_on_complete: bool) {
+        self.clear_on_complete = clear_on_complete;
+    }
+
+    /// Builder method to set clear_on_complete.
+    pub fn with_clear_on_complete(mut self, clear_on_complete: bool) -> Self {
+        self.clear_on_complete = clear_on_complete;
+        self
     }
 
     /// Create a new [`ProgressBarOpts`] which hides the progress bars.
