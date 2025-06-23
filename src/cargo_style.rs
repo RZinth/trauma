@@ -15,8 +15,8 @@ pub struct CargoProgressStyle {
     multi: Arc<MultiProgress>,
     /// Main progress bar for total progress
     main_bar: Arc<ProgressBar>,
-    /// Current active download progress bar
-    current_bar: Option<ProgressBar>,
+    /// Active download progress bars (filename -> progress bar)
+    active_bars: std::collections::HashMap<String, ProgressBar>,
 }
 
 impl CargoProgressStyle {
@@ -38,7 +38,7 @@ impl CargoProgressStyle {
             downloaded_files: Vec::with_capacity(total_files),
             multi,
             main_bar: Arc::new(main_bar),
-            current_bar: None,
+            active_bars: std::collections::HashMap::new(),
         }
     }
 
@@ -51,14 +51,14 @@ impl CargoProgressStyle {
         let pb = self.multi.add(ProgressBar::new(0));
         pb.set_style(
             ProgressStyle::default_bar()
-                .template("{bar:40.cyan/blue} {pos}/{len} {bytes_per_sec} {wide_msg}")
+                .template("{spinner:.green} {bar:40.cyan/blue} {bytes}/{total_bytes} {bytes_per_sec} {msg:.cyan}")
                 .unwrap()
-                .progress_chars("━╾╴")  // Unicode box-drawing characters
+                .progress_chars("━━━")  // Unicode box-drawing characters
         );
         pb.set_message(format!("{}...", download.filename));
 
-        // Update our current bar
-        self.current_bar = Some(pb.clone());
+            // Store this progress bar in our active bars
+            self.active_bars.insert(download.filename.clone(), pb.clone());
 
         // Redraw the display to show the updated list
         self.redraw();
@@ -76,48 +76,51 @@ impl CargoProgressStyle {
         // Advance the main progress bar
         self.main_bar.inc(1);
 
-        // Clear the current download bar
-        if let Some(bar) = &self.current_bar {
+        // Finish the progress bar for this file
+        if let Some(bar) = self.active_bars.remove(filename) {
             bar.finish_and_clear();
         }
 
-        // Redraw the display
+        // Display the completed download
+        eprintln!("  {}", style(format!("Downloaded {}", filename)).green());
+
+        // Redraw the display for remaining active downloads
         self.redraw();
     }
 
     /// Redraw the entire display
     fn redraw(&self) {
-        // Calculate how many files to show
-        let display_count = self.max_displayed_files.min(self.downloaded_files.len());
+        // We don't need to clear or redraw completed downloads - they stay in terminal history
+        // and are only printed when explicitly completed
 
-        // Clear previous output (move cursor up multiple lines and clear)
-        if !self.downloaded_files.is_empty() {
-            // We need to clear previous lines - the number of displayed files and current download line
-            let lines_to_clear = display_count + if self.current_bar.is_some() { 1 } else { 0 };
-            for _ in 0..lines_to_clear {
-                eprint!("\x1B[1A"); // Move the cursor up one line
-                eprint!("\x1B[2K"); // Clear the line
-            }
-        }
+        // We only need to update the active progress bars
+        // The MultiProgress handles positioning of the active bars
 
-        // Display downloaded files (taking the last N items)
-        let start_idx = self.downloaded_files.len().saturating_sub(display_count);
-        for (name, completed) in self.downloaded_files.iter().skip(start_idx) {
-            if *completed {
-                eprintln!("  {}", style(format!("Downloaded {}", name)).green());
-            }
+        // The main progress bar will show at the bottom after any active downloads
+        self.main_bar.tick();
+
+        // For active downloads, ensure they're properly updated
+        for bar in self.active_bars.values() {
+            bar.tick();
         }
     }
 
-    /// Set total bytes for the current download progress bar
-    pub fn set_total_bytes(&self, bytes: u64) {
-        if let Some(bar) = &self.current_bar {
+    /// Set total bytes for a specific download progress bar
+    pub fn set_total_bytes(&self, download_name: &str, bytes: u64) {
+        if let Some(bar) = self.active_bars.get(download_name) {
             bar.set_length(bytes);
         }
     }
 
     /// Finish the progress display
     pub fn finish(&mut self) {
+        // Clear all active progress bars
+        for bar in self.active_bars.values() {
+            bar.finish_and_clear();
+        }
+        self.active_bars.clear();
+
+        // Finish the main progress bar
         self.main_bar.finish_and_clear();
     }
 }

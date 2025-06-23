@@ -295,7 +295,8 @@ impl Downloader {
         let pb = progress.add_download(download);
         // Update total bytes in current download progress bar
         if size > 0 {
-            progress.set_total_bytes(size);
+            progress.set_total_bytes(&download.filename, size);
+            pb.set_length(size); // Ensure length is set on the bar itself
             // Update progress bar position if we're resuming
             if size_on_disk > 0 {
                 pb.set_position(size_on_disk);
@@ -551,8 +552,7 @@ impl Downloader {
 /// Extract content length from a response, supporting both Content-Range and Content-Length headers.
 ///
 /// This function first checks for a Content-Range header (from range requests) and extracts
-/// the total size. If that's not available, it falls back to the Content-Length header
-/// and adds 1 to account for the range request.
+/// the total size. If that's not available, it falls back to the Content-Length header.
 pub fn get_content_length(response: &Response) -> u64 {
     if let Some(content_range) = response.headers().get("Content-Range") {
         // Content-Range format is typically: "bytes 0-0/230917262"
@@ -567,7 +567,8 @@ pub fn get_content_length(response: &Response) -> u64 {
             })
             .unwrap_or(0)
     } else {
-        response.content_length().unwrap_or(0).saturating_add(1)
+        // Don't add 1 to the content length - this was causing incorrect size calculations
+        response.content_length().unwrap_or(0)
     }
 }
 
