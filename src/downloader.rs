@@ -202,7 +202,7 @@ impl Downloader {
                     .skip("File exists with matching hash");
                 }
                 Ok(false) => {
-                    // Hash verification failed - create a hash mismatch summary and call callback
+                    // Hash verification failed - delete the file and trigger callback
                     let file_size = std::fs::metadata(&file_path)
                         .map(|m| m.len())
                         .unwrap_or(0);
@@ -219,6 +219,16 @@ impl Downloader {
                     if let Some(ref callback) = self.on_complete {
                         callback(&hash_mismatch_summary);
                     }
+                
+                    if let Err(e) = fs::remove_file(&file_path) {
+                        return Summary::new(
+                            download.clone(),
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            0,
+                            false,
+                        ).fail(format!("Failed to remove file with wrong hash: {}", e));
+                    }
+                
                 }
                 Err(_) => {
                     // Error calculating hash, continue to download
