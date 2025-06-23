@@ -175,6 +175,7 @@ impl Downloader {
     }
 
     /// Fetches the files and write them to disk.
+
     async fn fetch(
         &self,
         client: &ClientWithMiddleware,
@@ -182,6 +183,35 @@ impl Downloader {
         multi: Arc<MultiProgress>,
         main: Arc<ProgressBar>,
     ) -> Summary {
+        let file_path = self.directory.join(&download.filename);
+        
+        // Check if file exists and hash matches
+        if file_path.exists() {
+            match download.verify_hash(&file_path) {
+                Ok(true) => {
+                    // Hash matches, skip download
+                    let file_size = std::fs::metadata(&file_path)
+                        .map(|m| m.len())
+                        .unwrap_or(0);
+                    
+                    return Summary::new(
+                        download.clone(),
+                        StatusCode::OK,
+                        file_size,
+                        false,
+                    )
+                    .skip("File exists with matching hash");
+                }
+                Ok(false) => {
+                    // Hash doesn't match, continue with download
+                }
+                Err(e) => {
+                    // Error calculating hash, continue with download
+                    eprintln!("Warning: Failed to verify hash for {}: {}", download.filename, e);
+                }
+            }
+        }
+        
         // Create a download summary.
         let mut size_on_disk: u64 = 0;
         let mut can_resume = false;

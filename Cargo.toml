@@ -28,12 +28,13 @@ thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
-console = "0.15.11"
+bacy = { git = "https://github.com/Deathemonic/BA-CY" }
 
 [dev-dependencies]
 color-eyre = "0.6.5"
 comfy-table = "7.1.4"
 rand = "0.9.1"
+console = "0.15.11"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [features]
