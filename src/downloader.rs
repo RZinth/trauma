@@ -16,6 +16,9 @@ use tracing::debug;
 
 pub struct TimeTrace;
 
+/// Callback type for download completion events
+pub type DownloadCallback = Box<dyn Fn(&Summary) + Send + Sync>;
+
 /// Represents the download controller.
 ///
 /// A downloader can be created via its builder:
@@ -27,7 +30,7 @@ pub struct TimeTrace;
 /// let d = DownloaderBuilder::new().build();
 /// # }
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Downloader {
     /// Directory where to store the downloaded files.
     directory: PathBuf,
@@ -45,6 +48,24 @@ pub struct Downloader {
     use_range_for_content_length: bool,
     /// Hide main progress bar for single file downloads.
     single_file_progress: bool,
+    /// Callback for when each download completes.
+    on_complete: Option<Arc<DownloadCallback>>,
+}
+
+impl std::fmt::Debug for Downloader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Downloader")
+            .field("directory", &self.directory)
+            .field("retries", &self.retries)
+            .field("concurrent_downloads", &self.concurrent_downloads)
+            .field("style_options", &self.style_options)
+            .field("resumable", &self.resumable)
+            .field("headers", &self.headers)
+            .field("use_range_for_content_length", &self.use_range_for_content_length)
+            .field("single_file_progress", &self.single_file_progress)
+            .field("on_complete", &self.on_complete.is_some())
+            .finish()
+    }
 }
 
 impl Downloader {
@@ -135,7 +156,7 @@ impl Downloader {
         // Return the download summaries.
         summaries
     }
-    
+
     /// Get content length using either HEAD request or Range request based on configuration.
     async fn get_content_length(&self, client: &ClientWithMiddleware, download: &Download) -> Result<Option<u64>, reqwest_middleware::Error> {
         if self.use_range_for_content_length {
@@ -145,7 +166,7 @@ impl Downloader {
                 .header("Range", "bytes=0-0")
                 .send()
                 .await?;
-            
+
             Ok(Some(get_content_length(&response)))
         } else {
             // Use the original HEAD request method
@@ -178,7 +199,12 @@ impl Downloader {
             can_resume = match download.is_resumable(client).await {
                 Ok(r) => r,
                 Err(e) => {
-                    return summary.fail(e);
+                    let summary = summary.fail(e);
+                    // Call the callback for failed downloads
+                    if let Some(ref callback) = self.on_complete {
+                        callback(&summary);
+                    }
+                    return summary;
                 }
             };
 
@@ -189,7 +215,12 @@ impl Downloader {
                 size_on_disk = match output.metadata() {
                     Ok(m) => m.len(),
                     Err(e) => {
-                        return summary.fail(e);
+                        let summary = summary.fail(e);
+                        // Call the callback for failed downloads
+                        if let Some(ref callback) = self.on_complete {
+                            callback(&summary);
+                        }
+                        return summary;
                     }
                 };
             }
@@ -203,7 +234,12 @@ impl Downloader {
             content_length = match self.get_content_length(client, download).await {
                 Ok(l) => l,
                 Err(e) => {
-                    return summary.fail(e);
+                    let summary = summary.fail(e);
+                    // Call the callback for failed downloads
+                    if let Some(ref callback) = self.on_complete {
+                        callback(&summary);
+                    }
+                    return summary;
                 }
             };
         }
@@ -224,23 +260,40 @@ impl Downloader {
         let res = match req.send().await {
             Ok(res) => res,
             Err(e) => {
-                return summary.fail(e);
+                let summary = summary.fail(e);
+                // Call the callback for failed downloads
+                if let Some(ref callback) = self.on_complete {
+                    callback(&summary);
+                }
+                return summary;
             }
         };
 
         // Check wether or not we need to download the file.
         if let Some(content_length) = content_length {
             if content_length == size_on_disk {
-                return summary.with_status(Status::Skipped(
+                let summary = summary.with_status(Status::Skipped(
                     "the file was already fully downloaded".into(),
                 ));
+                // Call the callback for skipped downloads
+                if let Some(ref callback) = self.on_complete {
+                    callback(&summary);
+                }
+                return summary;
             }
         }
 
         // Check the status for errors.
         match res.error_for_status_ref() {
             Ok(_res) => (),
-            Err(e) => return summary.fail(e),
+            Err(e) => {
+                let summary = summary.fail(e);
+                // Call the callback for failed downloads
+                if let Some(ref callback) = self.on_complete {
+                    callback(&summary);
+                }
+                return summary;
+            }
         };
 
         // Update the summary with the collected details.
@@ -253,9 +306,14 @@ impl Downloader {
 
         // If there is nothing else to download for this file, we can return.
         if size_on_disk > 0 && size == size_on_disk {
-            return summary.with_status(Status::Skipped(
+            let summary = summary.with_status(Status::Skipped(
                 "the file was already fully downloaded".into(),
             ));
+            // Call the callback for skipped downloads
+            if let Some(ref callback) = self.on_complete {
+                callback(&summary);
+            }
+            return summary;
         }
 
         // Create the progress bar.
@@ -276,7 +334,12 @@ impl Downloader {
         match fs::create_dir_all(output_dir) {
             Ok(_res) => (),
             Err(e) => {
-                return summary.fail(e);
+                let summary = summary.fail(e);
+                // Call the callback for failed downloads
+                if let Some(ref callback) = self.on_complete {
+                    callback(&summary);
+                }
+                return summary;
             }
         };
 
@@ -290,7 +353,12 @@ impl Downloader {
         {
             Ok(file) => file,
             Err(e) => {
-                return summary.fail(e);
+                let summary = summary.fail(e);
+                // Call the callback for failed downloads
+                if let Some(ref callback) = self.on_complete {
+                    callback(&summary);
+                }
+                return summary;
             }
         };
 
@@ -304,7 +372,12 @@ impl Downloader {
             let mut chunk = match item {
                 Ok(chunk) => chunk,
                 Err(e) => {
-                    return summary.fail(e);
+                    let summary = summary.fail(e);
+                    // Call the callback for failed downloads
+                    if let Some(ref callback) = self.on_complete {
+                        callback(&summary);
+                    }
+                    return summary;
                 }
             };
             let chunk_size = chunk.len() as u64;
@@ -315,7 +388,12 @@ impl Downloader {
             match file.write_all_buf(&mut chunk).await {
                 Ok(_res) => (),
                 Err(e) => {
-                    return summary.fail(e);
+                    let summary = summary.fail(e);
+                    // Call the callback for failed downloads
+                    if let Some(ref callback) = self.on_complete {
+                        callback(&summary);
+                    }
+                    return summary;
                 }
             };
         }
@@ -330,10 +408,17 @@ impl Downloader {
         // Advance the main progress bar.
         main.inc(1);
 
-        // Create a new summary with the real download size
-        let summary = Summary::new(download.clone(), status, final_size, can_resume);
+        // Create a new summary with the real download size and success status
+        let summary = Summary::new(download.clone(), status, final_size, can_resume)
+            .with_status(Status::Success);
+        
+        // Call the callback for successful downloads
+        if let Some(ref callback) = self.on_complete {
+            callback(&summary);
+        }
+
         // Return the download summary.
-        summary.with_status(Status::Success)
+        summary
     }
 }
 
@@ -428,6 +513,42 @@ impl DownloaderBuilder {
         self
     }
 
+    /// Set callback for when each download completes.
+    ///
+    /// The callback will be called immediately when each download finishes,
+    /// regardless of whether other downloads are still in progress.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use trauma::downloader::DownloaderBuilder;
+    /// use trauma::download::Status;
+    ///
+    /// let downloader = DownloaderBuilder::new()
+    ///     .on_complete(|summary| {
+    ///         match summary.status() {
+    ///             Status::Success => {
+    ///                 println!("[Success] {} Downloaded", summary.download().filename);
+    ///             }
+    ///             Status::Fail(error) => {
+    ///                 println!("[Failed] {} - Error: {}", summary.download().filename, error);
+    ///             }
+    ///             Status::Skipped(reason) => {
+    ///                 println!("[Skipped] {} - {}", summary.download().filename, reason);
+    ///             }
+    ///             _ => {}
+    ///         }
+    ///     })
+    ///     .build();
+    /// ```
+    pub fn on_complete<F>(mut self, callback: F) -> Self 
+    where 
+        F: Fn(&Summary) + Send + Sync + 'static 
+    {
+        self.0.on_complete = Some(Arc::new(Box::new(callback)));
+        self
+    }
+
     fn new_header(&self) -> HeaderMap {
         match self.0.headers {
             Some(ref h) => h.to_owned(),
@@ -512,6 +633,7 @@ impl DownloaderBuilder {
             headers: self.0.headers,
             use_range_for_content_length: self.0.use_range_for_content_length,
             single_file_progress: self.0.single_file_progress,
+            on_complete: self.0.on_complete,
         }
     }
 }
@@ -528,6 +650,7 @@ impl Default for DownloaderBuilder {
             headers: None,
             use_range_for_content_length: false,
             single_file_progress: false,
+            on_complete: None,
         })
     }
 }
