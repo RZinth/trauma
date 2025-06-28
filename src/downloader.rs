@@ -50,6 +50,8 @@ pub struct Downloader {
     single_file_progress: bool,
     /// Callback for when each download completes.
     on_complete: Option<Arc<DownloadCallback>>,
+    /// Force download and overwrite existing files.
+    overwrite: bool,
 }
 
 impl std::fmt::Debug for Downloader {
@@ -186,7 +188,7 @@ impl Downloader {
         let file_path = self.directory.join(&download.filename);
         
         // Check if file exists and hash matches
-        if file_path.exists() {
+        if !self.overwrite && file_path.exists() {
             match download.verify_hash(&file_path) {
                 Ok(true) => {
                     let file_size = std::fs::metadata(&file_path)
@@ -602,6 +604,10 @@ impl DownloaderBuilder {
         self.0.on_complete = Some(Arc::new(Box::new(callback)));
         self
     }
+    pub fn overwrite(mut self, overwrite: bool) -> Self {
+        self.0.overwrite = overwrite;
+        self
+    }
 
     fn new_header(&self) -> HeaderMap {
         match self.0.headers {
@@ -688,6 +694,7 @@ impl DownloaderBuilder {
             use_range_for_content_length: self.0.use_range_for_content_length,
             single_file_progress: self.0.single_file_progress,
             on_complete: self.0.on_complete,
+            overwrite: self.0.overwrite
         }
     }
 }
@@ -705,6 +712,7 @@ impl Default for DownloaderBuilder {
             use_range_for_content_length: false,
             single_file_progress: false,
             on_complete: None,
+            overwrite: false
         })
     }
 }
