@@ -10,7 +10,8 @@ use console::style;
 use std::path::PathBuf;
 use trauma::{
     download::Download,
-    downloader::{DownloaderBuilder, ProgressBarOpts, StyleOptions},
+    downloader::DownloaderBuilder,
+    ProgressBarOpts, StyleOptions,
     Error,
 };
 
