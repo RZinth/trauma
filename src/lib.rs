@@ -37,23 +37,12 @@ pub mod http;
 pub mod progress;
 pub mod utils;
 
-// Re-export Error and Result types for backward compatibility
-pub use error::{Error, Result};
-
-// Re-export download types for backward compatibility
+pub use download::hash::{detect_hash_type, verify_hash, HashType};
 pub use download::{Download, Status, Summary};
-
-// Re-export hash functionality for backward compatibility
-pub use download::hash::{HashType, detect_hash_type, verify_hash};
-
-// Re-export downloader types for backward compatibility
 pub use downloader::{Downloader, DownloaderBuilder};
-
-// Re-export progress types for backward compatibility
-pub use progress::{ProgressBarOpts, StyleOptions};
-
-// Re-export HTTP functionality for backward compatibility
+pub use error::{Error, Result};
 pub use http::{create_http_client, HttpClientConfig};
-
-// Re-export utils functionality for backward compatibility
-pub use utils::content_length::{extract_content_length, get_content_length, parse_content_range_total};
+pub use progress::{ProgressBarOpts, StyleOptions};
+pub use utils::content_length::{
+    extract_content_length, get_content_length, parse_content_range_total,
+};

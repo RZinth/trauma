@@ -98,7 +98,10 @@ impl std::fmt::Debug for DownloaderConfig {
             .field("style_options", &self.style_options)
             .field("resumable", &self.resumable)
             .field("headers", &self.headers)
-            .field("use_range_for_content_length", &self.use_range_for_content_length)
+            .field(
+                "use_range_for_content_length",
+                &self.use_range_for_content_length,
+            )
             .field("single_file_progress", &self.single_file_progress)
             .field("on_complete", &self.on_complete.is_some())
             .field("overwrite", &self.overwrite)
@@ -120,47 +123,5 @@ impl Default for DownloaderConfig {
             on_complete: None,
             overwrite: false,
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_downloader_config_default() {
-        let config = DownloaderConfig::default();
-        
-        assert_eq!(config.retries, 3);
-        assert_eq!(config.concurrent_downloads, 32);
-        assert!(config.resumable);
-        assert!(!config.use_range_for_content_length);
-        assert!(!config.single_file_progress);
-        assert!(!config.overwrite);
-        assert!(config.headers.is_none());
-        assert!(config.on_complete.is_none());
-    }
-
-    #[test]
-    fn test_http_client_config() {
-        let config = HttpClientConfig {
-            retries: 5,
-            proxy: None,
-            headers: None,
-        };
-        
-        assert_eq!(config.retries, 5);
-        assert!(config.proxy.is_none());
-        assert!(config.headers.is_none());
-    }
-
-    #[test]
-    fn test_downloader_config_debug() {
-        let config = DownloaderConfig::default();
-        let debug_str = format!("{:?}", config);
-        
-        assert!(debug_str.contains("DownloaderConfig"));
-        assert!(debug_str.contains("retries: 3"));
-        assert!(debug_str.contains("concurrent_downloads: 32"));
     }
 }

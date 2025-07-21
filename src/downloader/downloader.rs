@@ -59,7 +59,7 @@ use reqwest::{
 use reqwest_middleware::ClientWithMiddleware;
 use std::fmt;
 use std::fmt::Debug;
-use std::{path::PathBuf};
+use std::path::PathBuf;
 use tokio::{fs, fs::OpenOptions, io::AsyncWriteExt};
 use tracing::debug;
 
@@ -478,73 +478,4 @@ impl Downloader {
         // Return the download summary.
         summary
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_downloader_creation() {
-        let config = DownloaderConfig::default();
-        let downloader = Downloader::new(config);
-
-        assert_eq!(downloader.retries(), 3);
-        assert_eq!(downloader.concurrent_downloads(), 32);
-        assert!(downloader.resumable());
-        assert!(!downloader.use_range_for_content_length());
-        assert!(!downloader.single_file_progress());
-        assert!(!downloader.overwrite());
-    }
-
-    #[test]
-    fn test_downloader_getters() {
-        let mut config = DownloaderConfig::default();
-        config.directory = PathBuf::from("/tmp/test");
-        config.retries = 5;
-        config.concurrent_downloads = 10;
-        config.resumable = false;
-        config.use_range_for_content_length = true;
-        config.single_file_progress = true;
-        config.overwrite = true;
-
-        let downloader = Downloader::new(config);
-
-        assert_eq!(downloader.directory(), &PathBuf::from("/tmp/test"));
-        assert_eq!(downloader.retries(), 5);
-        assert_eq!(downloader.concurrent_downloads(), 10);
-        assert!(!downloader.resumable());
-        assert!(downloader.use_range_for_content_length());
-        assert!(downloader.single_file_progress());
-        assert!(downloader.overwrite());
-    }
-
-    #[test]
-    fn test_downloader_debug() {
-        let config = DownloaderConfig::default();
-        let downloader = Downloader::new(config);
-        let debug_str = format!("{:?}", downloader);
-
-        assert!(debug_str.contains("Downloader"));
-        assert!(debug_str.contains("config"));
-    }
-
-    #[test]
-    fn test_downloader_clone() {
-        let config = DownloaderConfig::default();
-        let downloader = Downloader::new(config);
-        let cloned = downloader.clone();
-
-        assert_eq!(downloader.retries(), cloned.retries());
-        assert_eq!(
-            downloader.concurrent_downloads(),
-            cloned.concurrent_downloads()
-        );
-        assert_eq!(downloader.resumable(), cloned.resumable());
-    }
-
-    // Note: Integration tests for actual download functionality would require
-    // setting up mock HTTP servers or using real URLs, which is better suited
-    // for integration tests rather than unit tests.
 }

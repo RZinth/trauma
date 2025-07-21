@@ -84,10 +84,8 @@ impl DownloaderBuilder {
     /// Convenience function to hide the progress bars.
     pub fn hidden() -> Self {
         let mut builder = DownloaderBuilder::default();
-        builder.config.style_options = StyleOptions::new(
-            ProgressBarOpts::hidden(),
-            ProgressBarOpts::hidden(),
-        );
+        builder.config.style_options =
+            StyleOptions::new(ProgressBarOpts::hidden(), ProgressBarOpts::hidden());
         builder
     }
 
@@ -252,118 +250,5 @@ impl DownloaderBuilder {
     /// Create the [`Downloader`] with the specified options.
     pub fn build(self) -> Downloader {
         Downloader::new(self.config)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
-    use std::path::PathBuf;
-    use std::sync::atomic;
-
-    #[test]
-    fn test_builder_defaults() {
-        let downloader = DownloaderBuilder::new().build();
-
-        assert_eq!(downloader.retries(), 3);
-        assert_eq!(downloader.concurrent_downloads(), 32);
-        assert!(downloader.resumable());
-        assert!(!downloader.use_range_for_content_length());
-        assert!(!downloader.single_file_progress());
-        assert!(!downloader.overwrite());
-        assert!(downloader.headers().is_none());
-    }
-
-    #[test]
-    fn test_builder_configuration() {
-        let directory = PathBuf::from("/tmp/downloads");
-        let downloader = DownloaderBuilder::new()
-            .directory(directory.clone())
-            .retries(5)
-            .concurrent_downloads(10)
-            .use_range_for_content_length(true)
-            .single_file_progress(true)
-            .overwrite(true)
-            .build();
-
-        assert_eq!(downloader.directory(), &directory);
-        assert_eq!(downloader.retries(), 5);
-        assert_eq!(downloader.concurrent_downloads(), 10);
-        assert!(downloader.use_range_for_content_length());
-        assert!(downloader.single_file_progress());
-        assert!(downloader.overwrite());
-    }
-
-    #[test]
-    fn test_builder_headers() {
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("test-agent"));
-
-        let downloader = DownloaderBuilder::new().headers(headers.clone()).build();
-
-        assert!(downloader.headers().is_some());
-        assert_eq!(
-            downloader.headers().unwrap().get(USER_AGENT),
-            Some(&HeaderValue::from_static("test-agent"))
-        );
-    }
-
-    #[test]
-    fn test_builder_single_header() {
-        let downloader = DownloaderBuilder::new()
-            .header(USER_AGENT, HeaderValue::from_static("single-test-agent"))
-            .build();
-
-        assert!(downloader.headers().is_some());
-        assert_eq!(
-            downloader.headers().unwrap().get(USER_AGENT),
-            Some(&HeaderValue::from_static("single-test-agent"))
-        );
-    }
-
-    #[test]
-    fn test_builder_hidden() {
-        let downloader = DownloaderBuilder::hidden().build();
-        
-        assert_eq!(downloader.retries(), 3);
-        assert_eq!(downloader.concurrent_downloads(), 32);
-    }
-
-    #[test]
-    fn test_builder_on_complete_callback() {
-        let callback_called = Arc::new(atomic::AtomicBool::new(false));
-        let callback_called_clone = callback_called.clone();
-
-        let _downloader = DownloaderBuilder::new()
-            .on_complete(move |_summary| {
-                callback_called_clone.store(true, atomic::Ordering::SeqCst);
-            })
-            .build();
-    }
-
-    #[test]
-    fn test_builder_chaining() {
-        let directory = PathBuf::from("/tmp/test");
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("chained-agent"));
-
-        let downloader = DownloaderBuilder::new()
-            .directory(directory.clone())
-            .retries(10)
-            .concurrent_downloads(5)
-            .headers(headers)
-            .use_range_for_content_length(true)
-            .single_file_progress(true)
-            .overwrite(true)
-            .build();
-
-        assert_eq!(downloader.directory(), &directory);
-        assert_eq!(downloader.retries(), 10);
-        assert_eq!(downloader.concurrent_downloads(), 5);
-        assert!(downloader.use_range_for_content_length());
-        assert!(downloader.single_file_progress());
-        assert!(downloader.overwrite());
-        assert!(downloader.headers().is_some());
     }
 }

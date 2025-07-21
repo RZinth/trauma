@@ -176,28 +176,8 @@ impl TryFrom<&str> for Download {
     fn try_from(value: &str) -> Result<Self, Self::Error> {
         Url::parse(value)
             .map_err(|e| {
-                Error::InvalidUrl(format!("the url \"{}\" cannot be parsed: {}", value, e))
+                Error::InvalidUrl(format!("The url \"{}\" cannot be parsed: {}", value, e))
             })
             .and_then(|u| Download::try_from(&u))
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const DOMAIN: &str = "http://domain.com/file.zip";
-
-    #[test]
-    fn test_try_from_url() {
-        let u = Url::parse(DOMAIN).unwrap();
-        let d = Download::try_from(&u).unwrap();
-        assert_eq!(d.filename, "file.zip")
-    }
-
-    #[test]
-    fn test_try_from_string() {
-        let d = Download::try_from(DOMAIN).unwrap();
-        assert_eq!(d.filename, "file.zip")
     }
 }

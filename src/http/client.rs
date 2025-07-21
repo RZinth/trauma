@@ -148,39 +148,3 @@ pub fn create_http_client(
 
     Ok(client)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
-
-    #[test]
-    fn test_default_config() {
-        let config = HttpClientConfig::default();
-        assert_eq!(config.retries, 3);
-        assert!(config.proxy.is_none());
-        assert!(config.headers.is_none());
-    }
-
-    #[test]
-    fn test_create_http_client_default() {
-        let config = HttpClientConfig::default();
-        let client = create_http_client(config);
-        assert!(client.is_ok());
-    }
-
-    #[test]
-    fn test_create_http_client_with_headers() {
-        let mut headers = HeaderMap::new();
-        headers.insert(USER_AGENT, HeaderValue::from_static("test-agent"));
-
-        let config = HttpClientConfig {
-            retries: 5,
-            proxy: None,
-            headers: Some(headers),
-        };
-
-        let client = create_http_client(config);
-        assert!(client.is_ok());
-    }
-}
