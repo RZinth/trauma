@@ -44,9 +44,9 @@
 //! }
 //! ```
 
-use bacy::{calculate_crc32, calculate_md5};
+use bacy::hash::{calculate_crc32, calculate_md5};
 use std::error::Error;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Supported hash types for file verification.
 #[derive(Debug, Clone, PartialEq)]
@@ -140,15 +140,13 @@ pub fn verify_hash(
 
     match hash_type {
         Some(HashType::Md5) => {
-            let calculated_hash = calculate_md5(PathBuf::from(file_path))?;
-            let matches = calculated_hash.to_lowercase() == expected_hash.to_lowercase();
-            Ok(matches)
+            let calculated_hash = calculate_md5(Path::new(file_path))?;
+            Ok(calculated_hash.to_lowercase() == expected_hash.to_lowercase())
         }
         Some(HashType::Crc32) => {
-            let calculated_hash = calculate_crc32(PathBuf::from(file_path))?;
+            let calculated_hash = calculate_crc32(Path::new(file_path))?;
             let expected_crc32: u32 = expected_hash.parse().map_err(|_| "Invalid CRC32 format")?;
-            let matches = calculated_hash == expected_crc32;
-            Ok(matches)
+            Ok(calculated_hash == expected_crc32)
         }
         None => Ok(false),
     }
