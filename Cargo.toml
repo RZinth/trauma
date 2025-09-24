@@ -1,6 +1,6 @@
 [package]
 name = "trauma"
-version = "3.1.2"
+version = "3.2.0"
 edition = "2021"
 license = "MIT"
 description = "Simplify and prettify HTTP downloads"
@@ -28,6 +28,7 @@ thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["macros", "rt-multi-thread"] }
 tracing = "0.1.41"
 tracing-subscriber = "0.3.19"
+flate2 = "1.1.2"
 bacy = { git = "https://github.com/Deathemonic/BA-CY", version = "2.4.0" }
 
 [dev-dependencies]

@@ -18,25 +18,8 @@
 //!
 //! // Create with custom filename
 //! let url = reqwest::Url::parse("https://example.com/download")?;
-//! let download = Download::new(&url, "custom-name.zip");
+//! let download = Download::new(url, "custom-name.zip");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
-//! ```
-//!
-//! ## Working with Hashes
-//!
-//! ```rust
-//! use trauma::download::Download;
-//! use reqwest::Url;
-//!
-//! # fn example() -> Result<(), Box<dyn std::error::Error>> {
-//! let url = Url::parse("https://example.com/file.zip")?;
-//! let download = Download::new_with_hash(
-//!     &url,
-//!     "file.zip",
-//!     Some("d41d8cd98f00b204e9800998ecf8427e".to_string()) // MD5 hash
-//! );
-//! # Ok(())
-//! # }
 //! ```
 
 use crate::error::Error;
@@ -59,6 +42,8 @@ pub struct Download {
     pub filename: String,
     /// Hash of the file (MD5 or CRC32).
     pub hash: Option<String>,
+    /// Target file to extract from archives
+    pub target_file: Option<String>,
 }
 
 impl Download {
@@ -79,24 +64,16 @@ impl Download {
     ///
     /// # fn main() -> Result<(), Report> {
     /// Download::try_from("https://example.com/file-0.1.2.zip")?;
-    /// Download::new(&Url::parse("https://example.com/file-0.1.2.zip")?, "file-0.1.2.zip");
+    /// Download::new(Url::parse("https://example.com/file-0.1.2.zip")?, "file-0.1.2.zip");
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new(url: &Url, filename: &str) -> Self {
+    pub fn new(url: Url, filename: &str) -> Self {
         Self {
-            url: url.clone(),
+            url,
             filename: String::from(filename),
             hash: None,
-        }
-    }
-
-    /// Creates a new [`Download`] with hash.
-    pub fn new_with_hash(url: &Url, filename: &str, hash: Option<String>) -> Self {
-        Self {
-            url: url.clone(),
-            filename: String::from(filename),
-            hash,
+            target_file: None,
         }
     }
 
@@ -141,6 +118,18 @@ impl Download {
             },
         }
     }
+
+    /// Check if this download should use archive extraction.
+    ///
+    /// Returns true if a target file is specified for extraction.
+    pub fn is_extraction(&self) -> bool {
+        self.target_file.is_some()
+    }
+
+    /// Get the target file to extract from archive (if any).
+    pub fn target_file(&self) -> Option<&str> {
+        self.target_file.as_deref()
+    }
 }
 
 impl TryFrom<&Url> for Download {
@@ -150,10 +139,10 @@ impl TryFrom<&Url> for Download {
         value
             .path_segments()
             .ok_or_else(|| {
-                Error::InvalidUrl(format!(
-                    "The url \"{}\" does not contain a valid path",
-                    value
-                ))
+                Error::InvalidUrl {
+                    url: value.as_str().into(),
+                    cause: "URL does not contain a valid path".into(),
+                }
             })?
             .next_back()
             .map(String::from)
@@ -163,9 +152,13 @@ impl TryFrom<&Url> for Download {
                     .map(|(key, val)| [key, val].concat())
                     .collect(),
                 hash: None,
+                target_file: None,
             })
             .ok_or_else(|| {
-                Error::InvalidUrl(format!("The url \"{}\" does not contain a filename", value))
+                Error::InvalidUrl {
+                    url: value.as_str().into(),
+                    cause: "URL does not contain a filename".into(),
+                }
             })
     }
 }
@@ -174,10 +167,39 @@ impl TryFrom<&str> for Download {
     type Error = crate::error::Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Url::parse(value)
+        let url = Url::parse(value)
             .map_err(|e| {
-                Error::InvalidUrl(format!("The url \"{}\" cannot be parsed: {}", value, e))
-            })
-            .and_then(|u| Download::try_from(&u))
+                Error::InvalidUrl {
+                    url: value.into(),
+                    cause: Box::new(e),
+                }
+            })?;
+        
+        let filename = url
+            .path_segments()
+            .ok_or_else(|| {
+                Error::InvalidUrl {
+                    url: value.into(),
+                    cause: "URL does not contain a valid path".into(),
+                }
+            })?
+            .next_back()
+            .ok_or_else(|| {
+                Error::InvalidUrl {
+                    url: value.into(),
+                    cause: "URL does not contain a filename".into(),
+                }
+            })?;
+        
+        let decoded_filename = form_urlencoded::parse(filename.as_bytes())
+            .map(|(key, val)| [key, val].concat())
+            .collect();
+        
+        Ok(Download {
+            url,
+            filename: decoded_filename,
+            hash: None,
+            target_file: None,
+        })
     }
 }

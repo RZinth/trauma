@@ -17,15 +17,23 @@ pub enum Error {
     ///
     /// This variant captures internal errors that don't fit into other categories,
     /// typically representing unexpected system-level failures.
-    #[error("Internal error: {0}")]
-    Internal(String),
+    #[error("Internal error")]
+    Internal {
+        message: Box<str>,
+        #[source]
+        cause: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// Error from the underlying URL parser or the expected URL format.
     ///
     /// This variant is returned when a provided URL cannot be parsed or doesn't
     /// conform to the expected format for HTTP/HTTPS downloads.
-    #[error("Invalid URL: {0}")]
-    InvalidUrl(String),
+    #[error("Invalid URL")]
+    InvalidUrl {
+        url: Box<str>,
+        #[source]
+        cause: Box<dyn std::error::Error + Send + Sync>,
+    },
 
     /// I/O Error.
     ///
@@ -45,6 +53,28 @@ pub enum Error {
     Reqwest {
         #[from]
         source: reqwest::Error,
+    },
+
+    /// Archive extraction error.
+    ///
+    /// This variant is returned when archive extraction operations fail, such as
+    /// parsing archive structure, finding files, or extracting content.
+    #[error("Archive extraction failed")]
+    Archive {
+        message: Box<str>,
+        #[source]
+        cause: Option<Box<dyn std::error::Error + Send + Sync>>,
+    },
+
+    /// Unsupported compression method in archive.
+    ///
+    /// This variant is returned when an archive uses a compression method
+    /// that is not supported by the extraction implementation.
+    #[error("Unsupported compression method")]
+    UnsupportedCompression {
+        message: u16,
+        #[source]
+        cause: Option<Box<dyn std::error::Error + Send + Sync>>,
     },
 }
 

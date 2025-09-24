@@ -30,6 +30,7 @@
 //! - [`progress`] - Progress bar styling and display management
 //! - [`utils`] - Shared utility functions
 
+pub mod archive;
 pub mod download;
 pub mod downloader;
 pub mod error;
@@ -46,3 +47,4 @@ pub use progress::{ProgressBarOpts, StyleOptions};
 pub use utils::content_length::{
     extract_content_length, get_content_length, parse_content_range_total,
 };
+pub use archive::{ZipExtractor, ZipFileInfo};

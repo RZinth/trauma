@@ -133,18 +133,13 @@ impl Downloader {
         self.config.overwrite
     }
 
-    /// Starts the downloads.
-    pub async fn download(&self, downloads: &[Download]) -> Vec<Summary> {
-        self.download_inner(downloads, None).await
-    }
-
-    /// Starts the downloads with proxy.
-    pub async fn download_with_proxy(
+    /// Starts the downloads with optional proxy.
+    pub async fn download(
         &self,
         downloads: &[Download],
-        proxy: reqwest::Proxy,
+        proxy: Option<reqwest::Proxy>,
     ) -> Vec<Summary> {
-        self.download_inner(downloads, Some(proxy)).await
+        self.download_inner(downloads, proxy).await
     }
 
     /// Starts the downloads.
