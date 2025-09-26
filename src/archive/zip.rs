@@ -112,27 +112,22 @@ impl<'a> ZipExtractor<'a> {
         let cd_size = u32::from_le_bytes([eocd[12], eocd[13], eocd[14], eocd[15]]) as u64;
         let cd_offset = u32::from_le_bytes([eocd[16], eocd[17], eocd[18], eocd[19]]) as u64;
 
-        let cd_data = if eocd_start + eocd_offset as u64 >= cd_offset + cd_size {
-            let cd_start_in_eocd = (eocd_offset as u64 + eocd_start) - cd_offset - cd_size;
-            eocd_data[cd_start_in_eocd as usize..eocd_offset].to_vec()
-        } else {
-            let cd_response = self.client
-                .get(self.url.as_str())
-                .header("Range", format!("bytes={}-{}", cd_offset, cd_offset + cd_size - 1))
-                .send()
-                .await
-                .map_err(|e| Error::Archive {
-                    message: "Failed to download central directory".into(),
-                    cause: Some(Box::new(e)),
-                })?;
-            
-            cd_response.bytes().await
-                .map_err(|e| Error::Archive {
-                    message: "Failed to read central directory".into(),
-                    cause: Some(Box::new(e)),
-                })?
-                .to_vec()
-        };
+        let cd_response = self.client
+            .get(self.url.as_str())
+            .header("Range", format!("bytes={}-{}", cd_offset, cd_offset + cd_size - 1))
+            .send()
+            .await
+            .map_err(|e| Error::Archive {
+                message: "Failed to download central directory".into(),
+                cause: Some(Box::new(e)),
+            })?;
+        
+        let cd_data = cd_response.bytes().await
+            .map_err(|e| Error::Archive {
+                message: "Failed to read central directory".into(),
+                cause: Some(Box::new(e)),
+            })?
+            .to_vec();
 
         let file_info = self.find_file_in_central_directory(&cd_data, target_filename)?
             .ok_or_else(|| Error::Archive {
@@ -212,7 +207,11 @@ impl<'a> ZipExtractor<'a> {
     fn find_file_in_central_directory(&self, cd_data: &[u8], target_filename: &str) -> Result<Option<ZipFileInfo>, Error> {
         let mut offset = 0;
 
-        while offset + CENTRAL_DIR_ENTRY_MIN_SIZE <= cd_data.len() {
+        while offset < cd_data.len() {
+            if offset + CENTRAL_DIR_ENTRY_MIN_SIZE > cd_data.len() {
+                break;
+            }
+            
             if &cd_data[offset..offset + 4] != CENTRAL_DIR_SIGNATURE {
                 break;
             }
