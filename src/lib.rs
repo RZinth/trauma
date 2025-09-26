@@ -47,4 +47,4 @@ pub use progress::{ProgressBarOpts, StyleOptions};
 pub use utils::content_length::{
     extract_content_length, get_content_length, parse_content_range_total,
 };
-pub use archive::{ZipExtractor, ZipFileInfo};
+pub use archive::ZipFileInfo;

@@ -50,6 +50,7 @@ use crate::download::{Download, Status, Summary};
 use crate::http::{create_http_client, HttpClientConfig};
 use crate::progress::display::ProgressDisplay;
 use crate::utils::content_length::get_content_length;
+use crate::archive::zip::ZipExtractor;
 
 use futures::stream::{self, StreamExt};
 use reqwest::{
@@ -187,7 +188,7 @@ impl Downloader {
         if self.config.use_range_for_content_length {
             // Use range request to get content length
             let response = client
-                .get(download.url.clone())
+                .get(download.url.as_str())
                 .header("Range", "bytes=0-0")
                 .send()
                 .await?;
@@ -244,6 +245,11 @@ impl Downloader {
                     // Error calculating hash, continue to download
                 }
             }
+        }
+
+        // Check if this is a ZIP extraction request
+        if download.is_extraction() {
+            return self.extract_from_zip(client, download, progress_display).await;
         }
 
         // Create a download summary.
@@ -310,7 +316,7 @@ impl Downloader {
 
         // Request the file.
         debug!("Fetching {}", &download.url);
-        let mut req = client.get(download.url.clone());
+        let mut req = client.get(download.url.as_str());
         if self.config.resumable && can_resume {
             req = req.header(RANGE, format!("bytes={}-", size_on_disk));
         }
@@ -471,6 +477,110 @@ impl Downloader {
         }
 
         // Return the download summary.
+        summary
+    }
+
+    /// Extract a specific file from a ZIP archive without downloading the entire ZIP.
+    async fn extract_from_zip(
+        &self,
+        client: &ClientWithMiddleware,
+        download: &Download,
+        progress_display: &ProgressDisplay,
+    ) -> Summary {
+        let target_file = match download.target_file() {
+            Some(file) => file,
+            None => {
+                return Summary::new(download.clone(), StatusCode::BAD_REQUEST, 0, false)
+                    .fail("No target file specified for ZIP extraction");
+            }
+        };
+
+        let output_path = self.config.directory.join(&download.filename);
+
+        // Create the progress bar for ZIP extraction
+        let pb = progress_display.create_child_progress(0, 0);
+        debug!("Starting ZIP extraction for target file: {}", target_file);
+
+        // Create ZIP extractor
+        let zip_extractor = match ZipExtractor::new(client, &download.url).await {
+            Ok(extractor) => extractor,
+            Err(e) => {
+                return self.create_error_summary(
+                    download,
+                    StatusCode::BAD_REQUEST,
+                    format!("Failed to initialize ZIP extractor: {}", e),
+                );
+            }
+        };
+
+        debug!("Reading ZIP central directory structure");
+
+        // Extract the target file
+        let extracted_data = match zip_extractor.extract_file(target_file).await {
+            Ok(data) => data,
+            Err(e) => {
+                return self.create_error_summary(
+                    download,
+                    StatusCode::NOT_FOUND,
+                    format!("Failed to extract '{}' from ZIP: {}", target_file, e),
+                );
+            }
+        };
+
+        let file_size = extracted_data.len() as u64;
+        debug!("Extracted {} bytes, writing to disk", file_size);
+
+        // Prepare the destination directory
+        let output_dir = output_path.parent().unwrap_or(&output_path);
+        debug!("Creating destination directory {:?}", output_dir);
+        if let Err(e) = fs::create_dir_all(output_dir).await {
+            return self.create_error_summary(
+                download,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to create directory: {}", e),
+            );
+        }
+
+        // Write the extracted data to disk
+        debug!("Writing extracted file to {:?}", &output_path);
+        if let Err(e) = fs::write(&output_path, &extracted_data).await {
+            return self.create_error_summary(
+                download,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to write extracted file: {}", e),
+            );
+        }
+
+        // Finish the progress bar
+        progress_display.finish_child(pb);
+        progress_display.increment_main();
+
+        // Create success summary
+        let summary = Summary::new(download.clone(), StatusCode::OK, file_size, false)
+            .with_status(Status::Success);
+
+        // Call the callback for successful downloads
+        if let Some(ref callback) = self.config.on_complete {
+            callback(&summary);
+        }
+
+        summary
+    }
+
+    /// Helper method to create error summaries and call callbacks.
+    fn create_error_summary(
+        &self,
+        download: &Download,
+        status_code: StatusCode,
+        error_message: String,
+    ) -> Summary {
+        let summary = Summary::new(download.clone(), status_code, 0, false).fail(error_message);
+
+        // Call the callback for failed downloads
+        if let Some(ref callback) = self.config.on_complete {
+            callback(&summary);
+        }
+
         summary
     }
 }

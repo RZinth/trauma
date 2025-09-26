@@ -21,6 +21,30 @@
 //! let download = Download::new(url, "custom-name.zip");
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
+//!
+//! ## ZIP Extraction
+//!
+//! Extract specific files from ZIP archives without downloading the entire ZIP:
+//!
+//! ```rust,no_run
+//! use trauma::download::Download;
+//! use trauma::downloader::DownloaderBuilder;
+//! use reqwest::Url;
+//!
+//! # async fn example() -> Result<(), Box<dyn std::error::Error>> {
+//! // Create a download with a target file for ZIP extraction
+//! let url = Url::parse("https://example.com/archive.zip")?;
+//! let mut download = Download::new(url, "extracted-file.txt");
+//! download.target_file = Some("path/in/zip/specific-file.txt".to_string());
+//!
+//! let downloader = DownloaderBuilder::new().build();
+//! let summaries = downloader.download(&[download]).await;
+//!
+//! // Only the target file content is downloaded, saving bandwidth
+//! // The file is saved as "extracted-file.txt" in the download directory
+//! # Ok(())
+//! # }
+//! ```
 
 use crate::error::Error;
 
@@ -130,6 +154,7 @@ impl Download {
     pub fn target_file(&self) -> Option<&str> {
         self.target_file.as_deref()
     }
+
 }
 
 impl TryFrom<&Url> for Download {

@@ -29,14 +29,14 @@ pub struct ZipFileInfo {
 }
 
 /// ZIP file extractor that can extract specific files from remote ZIP archives.
-pub struct ZipExtractor {
-    client: ClientWithMiddleware,
-    url: Url,
+pub struct ZipExtractor<'a> {
+    client: &'a ClientWithMiddleware,
+    url: &'a Url,
     zip_size: u64,
 }
 
-impl ZipExtractor {
-    pub async fn new(client: ClientWithMiddleware, url: Url) -> Result<Self, Error> {
+impl<'a> ZipExtractor<'a> {
+    pub async fn new(client: &'a ClientWithMiddleware, url: &'a Url) -> Result<Self, Error> {
         let head_response = client.head(url.clone()).send().await
             .map_err(|e| Error::Archive {
                 message: "Failed to get ZIP file info".into(),
@@ -79,7 +79,7 @@ impl ZipExtractor {
         let eocd_start = self.zip_size - eocd_size;
         
         let eocd_response = self.client
-            .get(self.url.clone())
+            .get(self.url.as_str())
             .header("Range", format!("bytes={}-{}", eocd_start, self.zip_size - 1))
             .send()
             .await
@@ -117,7 +117,7 @@ impl ZipExtractor {
             eocd_data[cd_start_in_eocd as usize..eocd_offset].to_vec()
         } else {
             let cd_response = self.client
-                .get(self.url.clone())
+                .get(self.url.as_str())
                 .header("Range", format!("bytes={}-{}", cd_offset, cd_offset + cd_size - 1))
                 .send()
                 .await
@@ -141,7 +141,7 @@ impl ZipExtractor {
             })?;
 
         let header_response = self.client
-            .get(self.url.clone())
+            .get(self.url.as_str())
             .header("Range", format!("bytes={}-{}", file_info.local_header_offset, file_info.local_header_offset + 29))
             .send()
             .await
@@ -169,7 +169,7 @@ impl ZipExtractor {
 
         let data_end = data_start + file_info.compressed_size - 1;
         let file_response = self.client
-            .get(self.url.clone())
+            .get(self.url.as_str())
             .header("Range", format!("bytes={}-{}", data_start, data_end))
             .send()
             .await
